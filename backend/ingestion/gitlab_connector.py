@@ -2,7 +2,7 @@ import logging
 
 import httpx
 
-from backend.ingestion.base import GitAdapter
+from backend.ingestion.base import GitAdapter, clean_commit_message
 from backend.ingestion.normaliser import (
     normalise_gitlab_pipeline,
     normalise_gitlab_mr,
@@ -92,7 +92,7 @@ class GitLabAdapter(GitAdapter):
                 raise RuntimeError(f"GitLab request failed: {e}") from e
 
             commit_messages = [
-                c.get("title") or (c.get("message", "")[:100])
+                clean_commit_message(c.get("title") or c.get("message", ""))
                 for c in commits_raw
             ]
 

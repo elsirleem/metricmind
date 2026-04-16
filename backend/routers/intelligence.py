@@ -89,13 +89,14 @@ async def explore_project(body: ExploreRequest):
 
     # Fetch Jira tickets (optional — failure is non-fatal)
     issue_summaries: list[str] = []
-    if body.jira_base_url and body.jira_project_key and JIRA_EMAIL and JIRA_TOKEN:
+    if body.jira_base_url and body.jira_project_key:
         try:
-            jira_auth = base64.b64encode(f"{JIRA_EMAIL}:{JIRA_TOKEN}".encode()).decode()
-            jira_headers = {
-                "Authorization": f"Basic {jira_auth}",
-                "Content-Type": "application/json",
-            }
+            # Auth is optional — public Jira instances (e.g. Apache) work without credentials
+            jira_headers: dict = {"Content-Type": "application/json"}
+            if JIRA_EMAIL and JIRA_TOKEN:
+                jira_auth = base64.b64encode(f"{JIRA_EMAIL}:{JIRA_TOKEN}".encode()).decode()
+                jira_headers["Authorization"] = f"Basic {jira_auth}"
+
             async with httpx.AsyncClient(timeout=30) as client:
                 jira_resp = await client.post(
                     f"{body.jira_base_url.rstrip('/')}/rest/api/2/search",

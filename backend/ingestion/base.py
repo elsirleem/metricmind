@@ -1,4 +1,32 @@
+import re
 from abc import ABC, abstractmethod
+
+# Matches ticket prefixes used by Apache, Jira-hosted projects, and similar:
+# [COLLECTIONS-123], [LANG-4567], [LOG4J2-999], PROJ-123:, (#123), etc.
+# Strips them so the LLM receives the descriptive text rather than opaque IDs.
+_TICKET_PREFIX = re.compile(
+    r"^\s*(\[[A-Z][A-Z0-9_]+-\d+\]\s*"   # [PROJECT-123]
+    r"|[A-Z][A-Z0-9_]+-\d+:\s*"           # PROJECT-123:
+    r"|\(#\d+\)\s*"                        # (#123)
+    r"|#\d+\s*)+",                         # #123
+    re.IGNORECASE,
+)
+
+
+def clean_commit_message(message: str) -> str:
+    """
+    Strip ticket/issue prefixes from a commit message first line.
+
+    Examples:
+      "[COLLECTIONS-123] Fix NPE"  →  "Fix NPE"
+      "LANG-456: Update javadoc"   →  "Update javadoc"
+      "(#789) Add feature"         →  "Add feature"
+      "Normal commit message"      →  "Normal commit message"  (unchanged)
+    """
+    first_line = (message or "").split("\n")[0].strip()
+    cleaned = _TICKET_PREFIX.sub("", first_line).strip()
+    # Fall back to the original first line if stripping left nothing
+    return cleaned if cleaned else first_line
 
 
 class GitAdapter(ABC):
