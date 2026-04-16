@@ -448,3 +448,102 @@ def get_metric_history(
     ]
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Raw event time series (for Trends charts — works from the first ingest)
+# ---------------------------------------------------------------------------
+
+@router.get("/api/metrics/{profile_id}/event-series")
+def get_event_series(
+    profile_id: str,
+    days: int = Query(default=90),
+    db: Session = Depends(get_db),
+):
+    """
+    Return daily event counts grouped by entity type.
+    Unlike /history (which requires multiple compute runs), this reads
+    directly from raw_events and works after a single ingest.
+
+    Response shape:
+      commits:   [{date, count}]
+      pipelines: [{date, success, failed, other}]
+      mrs:       [{date, opened, merged, closed}]
+    """
+    profile = db.query(Profile).filter(Profile.id == profile_id).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail=f"Profile {profile_id} not found")
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    raw_events = (
+        db.query(RawEvent)
+        .filter(
+            RawEvent.profile_id == profile_id,
+            RawEvent.timestamp >= cutoff,
+        )
+        .all()
+    )
+
+    commits_by_day: dict[str, int] = {}
+    pipelines_by_day: dict[str, dict[str, int]] = {}
+    mrs_by_day: dict[str, dict[str, int]] = {}
+
+    for event in raw_events:
+        ts = event.timestamp
+        if not ts or len(ts) < 10:
+            continue
+        day = ts[:10]  # YYYY-MM-DD
+
+        if event.entity_type == "commit":
+            commits_by_day[day] = commits_by_day.get(day, 0) + 1
+
+        elif event.entity_type == "pipeline":
+            if day not in pipelines_by_day:
+                pipelines_by_day[day] = {"success": 0, "failed": 0, "other": 0}
+            try:
+                attrs = json.loads(event.attributes) if isinstance(event.attributes, str) else {}
+            except Exception:
+                attrs = {}
+            status = attrs.get("status", "")
+            if status == "success":
+                pipelines_by_day[day]["success"] += 1
+            elif status in ("failed", "failure"):
+                pipelines_by_day[day]["failed"] += 1
+            else:
+                pipelines_by_day[day]["other"] += 1
+
+        elif event.entity_type == "mr":
+            if day not in mrs_by_day:
+                mrs_by_day[day] = {"opened": 0, "merged": 0, "closed": 0}
+            try:
+                attrs = json.loads(event.attributes) if isinstance(event.attributes, str) else {}
+            except Exception:
+                attrs = {}
+            state = attrs.get("state", "open")
+            if state == "merged":
+                # Use merged_at date when available so bar lands on the right day
+                merged_at = attrs.get("merged_at")
+                merge_day = merged_at[:10] if merged_at and len(merged_at) >= 10 else day
+                if merge_day not in mrs_by_day:
+                    mrs_by_day[merge_day] = {"opened": 0, "merged": 0, "closed": 0}
+                mrs_by_day[merge_day]["merged"] += 1
+            elif state == "closed":
+                mrs_by_day[day]["closed"] += 1
+            else:
+                mrs_by_day[day]["opened"] += 1
+
+    return {
+        "commits": [
+            {"date": d, "count": c}
+            for d, c in sorted(commits_by_day.items())
+        ],
+        "pipelines": [
+            {"date": d, **v}
+            for d, v in sorted(pipelines_by_day.items())
+        ],
+        "mrs": [
+            {"date": d, **v}
+            for d, v in sorted(mrs_by_day.items())
+        ],
+    }
