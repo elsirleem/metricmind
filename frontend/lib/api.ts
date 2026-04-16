@@ -117,6 +117,56 @@ export interface ManualMetricInput {
 }
 
 // ---------------------------------------------------------------------------
+// Time window
+// ---------------------------------------------------------------------------
+
+export interface TimeWindow {
+  mode: "preset" | "full_history" | "custom";
+  preset?: "7d" | "30d" | "90d" | "6m";
+  custom_start?: string;  // YYYY-MM-DD
+  custom_end?: string;    // YYYY-MM-DD
+}
+
+export interface ResolvedWindow {
+  c_start: Date;
+  c_end: Date;
+  p_start: Date;
+  p_end: Date;
+}
+
+const PRESET_DAYS: Record<string, number> = { "7d": 7, "30d": 30, "90d": 90, "6m": 182 };
+
+export function resolveWindowDates(window: TimeWindow): ResolvedWindow {
+  const now = new Date();
+
+  if (window.mode === "preset") {
+    const days = PRESET_DAYS[window.preset ?? "30d"] ?? 30;
+    const ms = days * 86_400_000;
+    const c_end = now;
+    const c_start = new Date(now.getTime() - ms);
+    const p_end = c_start;
+    const p_start = new Date(c_start.getTime() - ms);
+    return { c_start, c_end, p_start, p_end };
+  }
+
+  if (window.mode === "custom" && window.custom_start && window.custom_end) {
+    const c_start = new Date(window.custom_start + "T00:00:00Z");
+    const c_end = new Date(window.custom_end + "T23:59:59Z");
+    const duration = c_end.getTime() - c_start.getTime();
+    const p_end = c_start;
+    const p_start = new Date(c_start.getTime() - duration);
+    return { c_start, c_end, p_start, p_end };
+  }
+
+  // full_history or incomplete custom — return a 90-day default split
+  const half = 45 * 86_400_000;
+  const c_end = now;
+  const c_start = new Date(now.getTime() - half);
+  const p_start = new Date(now.getTime() - half * 2);
+  return { c_start, c_end, p_start, p_end: c_start };
+}
+
+// ---------------------------------------------------------------------------
 // API functions
 // ---------------------------------------------------------------------------
 
@@ -141,12 +191,16 @@ export const getProfiles = () =>
 export const deleteProfile = (id: string) =>
   api.delete<{ status: string; id: string }>(`/api/profile/${id}`).then((r) => r.data);
 
-export const ingestData = (profileId: string, periodDays = 14) =>
-  api.post<{ status: string; events_ingested: number }>(`/api/ingest/${profileId}?period_days=${periodDays}`).then((r) => r.data);
+export const ingestData = (profileId: string, timeWindow?: TimeWindow, periodDays = 30) =>
+  api.post<{ status: string; events_ingested: number }>(
+    `/api/ingest/${profileId}?period_days=${periodDays}`,
+    timeWindow ? { time_window: timeWindow } : {}
+  ).then((r) => r.data);
 
-export const computeMetrics = (profileId: string, periodDays = 14, metricCodes?: string) =>
+export const computeMetrics = (profileId: string, timeWindow?: TimeWindow, periodDays = 30, metricCodes?: string) =>
   api.post<{ status: string; metrics_computed: number }>(
-    `/api/metrics/compute/${profileId}?period_days=${periodDays}${metricCodes ? `&metric_codes=${metricCodes}` : ""}`
+    `/api/metrics/compute/${profileId}?period_days=${periodDays}${metricCodes ? `&metric_codes=${metricCodes}` : ""}`,
+    timeWindow ? { time_window: timeWindow } : {}
   ).then((r) => r.data);
 
 export const getMetrics = (profileId: string) =>

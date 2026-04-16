@@ -1,18 +1,25 @@
 "use client";
 import { MetricRecord } from "@/lib/api";
 
-// SBP status colors
-const STATUS_STYLE: Record<string, { borderLeft: string; badgeBg: string; badgeBorder: string; badgeText: string }> = {
-  within:  { borderLeft: "#16A34A", badgeBg: "#E8F5E9", badgeBorder: "#16A34A", badgeText: "#14532D" },
-  warning: { borderLeft: "#D97706", badgeBg: "#FFFBEB", badgeBorder: "#D97706", badgeText: "#78350F" },
-  breach:  { borderLeft: "#DC2626", badgeBg: "#FEF2F2", badgeBorder: "#DC2626", badgeText: "#7F1D1D" },
+// SBP status colors — drive the footer badge only
+const STATUS_STYLE: Record<string, { badgeBg: string; badgeBorder: string; badgeText: string }> = {
+  within:  { badgeBg: "#E8F5E9", badgeBorder: "#16A34A", badgeText: "#14532D" },
+  warning: { badgeBg: "#FFFBEB", badgeBorder: "#D97706", badgeText: "#78350F" },
+  breach:  { badgeBg: "#FEF2F2", badgeBorder: "#DC2626", badgeText: "#7F1D1D" },
 };
 
-// SBP tier colors — card background + border-left + badge
-const TIER_STYLE: Record<string, { cardBg: string; titleColor: string; badgeBg: string; badgeBorder: string; badgeText: string }> = {
-  devops:         { cardBg: "#FFFFFF", titleColor: "#0A1628", badgeBg: "#EBF2FE", badgeBorder: "#1B6EF3", badgeText: "#0A1628" },
-  business:       { cardBg: "#FFFFFF", titleColor: "#064D3B", badgeBg: "#E0F4EF", badgeBorder: "#0B7A5E", badgeText: "#064D3B" },
-  sustainability: { cardBg: "#FFFFFF", titleColor: "#14532D", badgeBg: "#E8F5E9", badgeBorder: "#16A34A", badgeText: "#14532D" },
+// SBP tier colors — border-left stripe + badge + title
+// Left stripe = permanent tier identity; status badge in footer = health signal
+const TIER_STYLE: Record<string, { borderLeft: string; cardBg: string; titleColor: string; badgeBg: string; badgeBorder: string; badgeText: string }> = {
+  devops:         { borderLeft: "#1B6EF3", cardBg: "#FFFFFF", titleColor: "#0A1628", badgeBg: "#EBF2FE", badgeBorder: "#1B6EF3", badgeText: "#0A1628" },
+  business:       { borderLeft: "#0B7A5E", cardBg: "#FFFFFF", titleColor: "#064D3B", badgeBg: "#E0F4EF", badgeBorder: "#0B7A5E", badgeText: "#064D3B" },
+  sustainability: { borderLeft: "#16A34A", cardBg: "#FFFFFF", titleColor: "#14532D", badgeBg: "#E8F5E9", badgeBorder: "#16A34A", badgeText: "#14532D" },
+};
+
+const THRESHOLD_SOURCE_LABEL: Record<string, string> = {
+  dora_benchmark:   "DORA benchmark",
+  periodic_system:  "System default",
+  declared:         "Your declared target",
 };
 
 const TREND_ICON: Record<string, { symbol: string; color: string }> = {
@@ -37,7 +44,7 @@ export default function MetricCard({ metric }: { metric: MetricRecord }) {
       style={{
         backgroundColor: tier.cardBg,
         borderColor: "#E2E8F0",
-        borderLeft: `4px solid ${status.borderLeft}`,
+        borderLeft: `4px solid ${tier.borderLeft}`,
       }}
     >
       {/* Header row */}
@@ -67,15 +74,25 @@ export default function MetricCard({ metric }: { metric: MetricRecord }) {
 
       {/* Footer row */}
       <div className="flex items-center gap-2 flex-wrap">
-        <span
-          className="badge"
-          style={{ backgroundColor: status.badgeBg, border: `1px solid ${status.badgeBorder}`, color: status.badgeText }}
-        >
-          {statusKey}
-          {metric.threshold_value !== null && metric.threshold_value !== undefined
-            ? ` · ${metric.threshold_value}`
-            : ""}
-        </span>
+        <div className="relative group">
+          <span
+            className="badge cursor-default"
+            style={{ backgroundColor: status.badgeBg, border: `1px solid ${status.badgeBorder}`, color: status.badgeText }}
+          >
+            {statusKey}
+            {metric.threshold_value !== null && metric.threshold_value !== undefined
+              ? ` · ${metric.threshold_value}`
+              : ""}
+          </span>
+          {metric.threshold_source && metric.threshold_source !== "none" && (
+            <div className="absolute bottom-full left-0 mb-1.5 hidden group-hover:block z-10 pointer-events-none">
+              <div className="bg-[#0A1628] text-white text-[11px] font-medium px-2.5 py-1.5 rounded-lg whitespace-nowrap shadow-lg">
+                {THRESHOLD_SOURCE_LABEL[metric.threshold_source] ?? metric.threshold_source}
+              </div>
+              <div className="w-2 h-2 bg-[#0A1628] rotate-45 ml-3 -mt-1" />
+            </div>
+          )}
+        </div>
 
         {metric.sustainability_dimension && (
           <span className="badge" style={{ backgroundColor: "#E8F5E9", border: "1px solid #16A34A", color: "#14532D" }}>

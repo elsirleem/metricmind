@@ -386,7 +386,7 @@ export default function ProfileWizard() {
         : undefined;
 
       try { await ingestData(profileId); } catch {}
-      try { await computeMetrics(profileId, 14, metricCodes); } catch {}
+      try { await computeMetrics(profileId, undefined, 30, metricCodes); } catch {}
 
       router.push(`/dashboard?profile_id=${profileId}`);
     } catch (e: unknown) {

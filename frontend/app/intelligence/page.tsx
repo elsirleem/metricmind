@@ -7,9 +7,11 @@ import Link from "next/link";
 import TradeoffPanel from "@/components/TradeoffPanel";
 import SustainabilityNote from "@/components/SustainabilityNote";
 import RecommendationPanel from "@/components/RecommendationPanel";
+import TimeWindowSelector from "@/components/TimeWindowSelector";
 import {
   ReasoningReport, ExplanationOutput,
-  runReasoning, runExplanation, getLatestExplanation,
+  TimeWindow, resolveWindowDates,
+  ingestData, computeMetrics, runReasoning, runExplanation, getLatestExplanation,
 } from "@/lib/api";
 
 const HEALTH_STYLES: Record<string, { bg: string; border: string; dot: string; text: string }> = {
@@ -18,14 +20,17 @@ const HEALTH_STYLES: Record<string, { bg: string; border: string; dot: string; t
   red:   { bg: "#FEF2F2", border: "#DC2626", dot: "#DC2626", text: "#7F1D1D" },
 };
 
+const DEFAULT_WINDOW: TimeWindow = { mode: "preset", preset: "30d" };
+
 function IntelligenceContent() {
   const params = useSearchParams();
   const profileId = params.get("profile_id") ?? "";
 
+  const [timeWindow, setTimeWindow]   = useState<TimeWindow>(DEFAULT_WINDOW);
   const [report, setReport]           = useState<ReasoningReport | null>(null);
   const [explanation, setExplanation] = useState<ExplanationOutput | null>(null);
   const [loading, setLoading]         = useState(false);
-  const [loadingExplain, setLoadingExplain] = useState(false);
+  const [loadingStep, setLoadingStep] = useState("");
   const [error, setError]             = useState("");
 
   useEffect(() => {
@@ -35,19 +40,50 @@ function IntelligenceContent() {
 
   const handleRunAnalysis = async () => {
     if (!profileId) return;
-    setLoading(true); setError("");
+    setLoading(true);
+    setError("");
+    setReport(null);
+
     try {
+      // Step 1 — Ingest raw events covering both periods
+      setLoadingStep("Fetching data…");
+      await ingestData(profileId, timeWindow);
+
+      // Step 2 — Compute metrics for the selected time window
+      setLoadingStep("Computing metrics…");
+      await computeMetrics(profileId, timeWindow);
+
+      // Persist the period boundary so Trends page can render it
+      try {
+        if (timeWindow.mode !== "full_history") {
+          const resolved = resolveWindowDates(timeWindow);
+          localStorage.setItem("tw_c_start", resolved.c_start.toISOString());
+          localStorage.setItem("tw_c_end", resolved.c_end.toISOString());
+        } else {
+          localStorage.removeItem("tw_c_start");
+          localStorage.removeItem("tw_c_end");
+        }
+      } catch {
+        // localStorage unavailable — non-fatal
+      }
+
+      // Step 3 — Reasoning
+      setLoadingStep("Running analysis…");
       const r = await runReasoning(profileId);
       setReport(r);
-      setLoadingExplain(true);
+
+      // Step 4 — Explanation
+      setLoadingStep("Generating explanation…");
       const e = await runExplanation(profileId);
       setExplanation(e);
-    } catch (e: unknown) {
-      setError("Analysis failed. Check that the profile is confirmed and metrics are available.");
-      console.error(e);
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : "Analysis failed. Check that the profile is confirmed and metrics are available.";
+      setError(msg);
+      console.error(err);
     } finally {
       setLoading(false);
-      setLoadingExplain(false);
+      setLoadingStep("");
     }
   };
 
@@ -78,14 +114,6 @@ function IntelligenceContent() {
                 Trends
               </Link>
             )}
-            <button
-              onClick={handleRunAnalysis}
-              disabled={loading || !profileId}
-              className="inline-flex items-center gap-2 py-2 px-4 rounded-lg text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
-              style={{ backgroundColor: "#1B6EF3", color: "#FFFFFF" }}
-            >
-              {loading ? (loadingExplain ? "Generating explanation…" : "Reasoning…") : "Run analysis"}
-            </button>
           </div>
         </div>
       </header>
@@ -96,6 +124,27 @@ function IntelligenceContent() {
             {error}
           </div>
         )}
+
+        {/* Time window selector + Run Analysis */}
+        <div className="mb-6">
+          <TimeWindowSelector value={timeWindow} onChange={setTimeWindow} />
+          <button
+            type="button"
+            onClick={handleRunAnalysis}
+            disabled={loading || !profileId}
+            className="w-full inline-flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg text-sm font-semibold disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{ backgroundColor: "#1B6EF3", color: "#FFFFFF" }}
+          >
+            {loading ? (
+              <>
+                <span className="inline-block w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                {loadingStep || "Running…"}
+              </>
+            ) : (
+              "Run Analysis →"
+            )}
+          </button>
+        </div>
 
         {/* Health banner */}
         {report && hs && (
@@ -156,8 +205,8 @@ function IntelligenceContent() {
         )}
 
         {!report && !explanation && !loading && (
-          <div className="text-center py-20">
-            <p className="text-slate-400 text-sm">Click &quot;Run analysis&quot; to generate a reasoning report and stakeholder explanation.</p>
+          <div className="text-center py-16">
+            <p className="text-slate-400 text-sm">Select a time window and click &quot;Run Analysis&quot; to generate a report.</p>
           </div>
         )}
 

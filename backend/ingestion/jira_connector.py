@@ -19,18 +19,29 @@ class JiraProjectNotFoundError(Exception):
 
 
 def _auth_header() -> dict:
-    """Basic auth header encoded from JIRA_EMAIL:JIRA_TOKEN."""
-    token = base64.b64encode(f"{JIRA_EMAIL}:{JIRA_TOKEN}".encode()).decode()
-    return {"Authorization": f"Basic {token}", "Content-Type": "application/json"}
+    """
+    Build request headers for Jira.
+    If JIRA_EMAIL and JIRA_TOKEN are set, send Basic auth (Atlassian Cloud / private Jira).
+    If not set, send no Authorization header so public Jira instances (e.g. Apache's
+    issues.apache.org/jira) work without credentials.
+    """
+    headers: dict = {"Content-Type": "application/json"}
+    if JIRA_EMAIL and JIRA_TOKEN:
+        token = base64.b64encode(f"{JIRA_EMAIL}:{JIRA_TOKEN}".encode()).decode()
+        headers["Authorization"] = f"Basic {token}"
+    return headers
 
 
 async def fetch_jira_data(
     profile_id: str,
-    period_days: int,
     config: DataSourceConfig,
+    since_date: str,
+    until_date: str,
 ) -> list[dict]:
     """
     Loop over all configured Jira project keys.
+
+    since_date / until_date — ISO date strings ("YYYY-MM-DD") used in JQL.
     Skips missing projects with a warning.
     Raises RuntimeError if every configured project fails.
     """
@@ -48,7 +59,7 @@ async def fetch_jira_data(
     for project_key in config.jira_project_keys:
         try:
             events = await _fetch_single_project(
-                profile_id, period_days, project_key, config.jira_base_url
+                profile_id, project_key, config.jira_base_url, since_date, until_date
             )
             all_events.extend(events)
         except JiraProjectNotFoundError:
@@ -68,9 +79,10 @@ async def fetch_jira_data(
 
 async def _fetch_single_project(
     profile_id: str,
-    period_days: int,
     project_key: str,
     base_url: str,
+    since_date: str,
+    until_date: str,
 ) -> list[dict]:
     headers = _auth_header()
     search_url = f"{base_url.rstrip('/')}/rest/api/2/search"
@@ -80,7 +92,10 @@ async def _fetch_single_project(
     incident_issues = await _jql_search(
         search_url,
         headers,
-        jql=f"project={project_key} AND issuetype in (Bug, Incident) AND created >= -{period_days}d",
+        jql=(
+            f"project={project_key} AND issuetype in (Bug, Incident) "
+            f'AND created >= "{since_date}" AND created <= "{until_date}"'
+        ),
         project_key=project_key,
     )
 
@@ -88,7 +103,10 @@ async def _fetch_single_project(
     all_issues = await _jql_search(
         search_url,
         headers,
-        jql=f"project={project_key} AND created >= -{period_days}d",
+        jql=(
+            f"project={project_key} "
+            f'AND created >= "{since_date}" AND created <= "{until_date}"'
+        ),
         project_key=project_key,
     )
 

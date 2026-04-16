@@ -1,10 +1,14 @@
 """
 Metric computation service.
-All functions receive a list of event dicts (attributes already parsed to dict)
-and a period_days integer.
-All functions return {"current": float, "previous": float, "unit": str}.
-Current period  = [now - period_days, now)
-Previous period = [now - 2*period_days, now - period_days)
+
+All individual metric functions now receive explicit date ranges:
+  compute_X(events, c_start, c_end, p_start, p_end) -> dict
+
+compute_all() resolves a TimeWindow into date ranges and runs all functions.
+Each function returns {"current": float, "previous": float, "unit": str}.
+
+Current period  = [c_start, c_end)
+Previous period = [p_start, p_end)
 """
 
 import json
@@ -16,24 +20,8 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Period helpers
+# Date helpers
 # ---------------------------------------------------------------------------
-
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def _current_period(period_days: int) -> tuple[datetime, datetime]:
-    end = _now()
-    start = end - timedelta(days=period_days)
-    return start, end
-
-
-def _previous_period(period_days: int) -> tuple[datetime, datetime]:
-    end = _now() - timedelta(days=period_days)
-    start = end - timedelta(days=period_days)
-    return start, end
-
 
 def _parse_dt(iso: str) -> datetime | None:
     try:
@@ -93,7 +81,11 @@ def _merged_mrs_in(mrs: list[dict], start: datetime, end: datetime) -> list[dict
 # Individual metric functions
 # ---------------------------------------------------------------------------
 
-def compute_cfr(events: list[dict], period_days: int) -> dict:
+def compute_cfr(
+    events: list[dict],
+    c_start: datetime, c_end: datetime,
+    p_start: datetime, p_end: datetime,
+) -> dict:
     """Change Failure Rate = failed pipelines / total pipelines * 100  (%)"""
     def _cfr(pipes: list[dict]) -> float:
         if not pipes:
@@ -101,8 +93,6 @@ def compute_cfr(events: list[dict], period_days: int) -> dict:
         failed = sum(1 for p in pipes if p["attributes"].get("status") == "failed")
         return (failed / len(pipes)) * 100
 
-    c_start, c_end = _current_period(period_days)
-    p_start, p_end = _previous_period(period_days)
     return {
         "current": _cfr(_pipelines(events, c_start, c_end)),
         "previous": _cfr(_pipelines(events, p_start, p_end)),
@@ -110,7 +100,11 @@ def compute_cfr(events: list[dict], period_days: int) -> dict:
     }
 
 
-def compute_df(events: list[dict], period_days: int) -> dict:
+def compute_df(
+    events: list[dict],
+    c_start: datetime, c_end: datetime,
+    p_start: datetime, p_end: datetime,
+) -> dict:
     """Deployment Frequency = count of successful deployments to main/master/trunk/develop."""
     def _df(pipes: list[dict]) -> float:
         return float(sum(
@@ -119,8 +113,6 @@ def compute_df(events: list[dict], period_days: int) -> dict:
             and p["attributes"].get("ref") in ("main", "master", "trunk", "develop")
         ))
 
-    c_start, c_end = _current_period(period_days)
-    p_start, p_end = _previous_period(period_days)
     return {
         "current": _df(_pipelines(events, c_start, c_end)),
         "previous": _df(_pipelines(events, p_start, p_end)),
@@ -128,7 +120,11 @@ def compute_df(events: list[dict], period_days: int) -> dict:
     }
 
 
-def compute_mttr(events: list[dict], period_days: int) -> dict:
+def compute_mttr(
+    events: list[dict],
+    c_start: datetime, c_end: datetime,
+    p_start: datetime, p_end: datetime,
+) -> dict:
     """Mean Time to Recover = avg hours from incident open to resolved."""
     def _mttr(start: datetime, end: datetime) -> float:
         resolved = [
@@ -145,8 +141,6 @@ def compute_mttr(events: list[dict], period_days: int) -> dict:
                 deltas.append((resolved_dt - created_dt).total_seconds() / 3600)
         return _mean(deltas)
 
-    c_start, c_end = _current_period(period_days)
-    p_start, p_end = _previous_period(period_days)
     return {
         "current": _mttr(c_start, c_end),
         "previous": _mttr(p_start, p_end),
@@ -154,7 +148,11 @@ def compute_mttr(events: list[dict], period_days: int) -> dict:
     }
 
 
-def compute_ltfc(events: list[dict], period_days: int) -> dict:
+def compute_ltfc(
+    events: list[dict],
+    c_start: datetime, c_end: datetime,
+    p_start: datetime, p_end: datetime,
+) -> dict:
     """Lead Time for Changes = avg hours from MR created_at to merged_at.
     Note: GitLab's commits API does not tag commits with branch names, so
     MR created_at is used as the best available proxy for 'first commit on branch'.
@@ -168,8 +166,6 @@ def compute_ltfc(events: list[dict], period_days: int) -> dict:
                 deltas.append((merged_dt - created_dt).total_seconds() / 3600)
         return _mean(deltas)
 
-    c_start, c_end = _current_period(period_days)
-    p_start, p_end = _previous_period(period_days)
     return {
         "current": _ltfc(c_start, c_end),
         "previous": _ltfc(p_start, p_end),
@@ -177,7 +173,11 @@ def compute_ltfc(events: list[dict], period_days: int) -> dict:
     }
 
 
-def compute_prct(events: list[dict], period_days: int) -> dict:
+def compute_prct(
+    events: list[dict],
+    c_start: datetime, c_end: datetime,
+    p_start: datetime, p_end: datetime,
+) -> dict:
     """Pull Request Cycle Time = avg hours from MR created to merged."""
     def _prct(start: datetime, end: datetime) -> float:
         deltas = []
@@ -188,8 +188,6 @@ def compute_prct(events: list[dict], period_days: int) -> dict:
                 deltas.append((merged_dt - created_dt).total_seconds() / 3600)
         return _mean(deltas)
 
-    c_start, c_end = _current_period(period_days)
-    p_start, p_end = _previous_period(period_days)
     return {
         "current": _prct(c_start, c_end),
         "previous": _prct(p_start, p_end),
@@ -197,7 +195,11 @@ def compute_prct(events: list[dict], period_days: int) -> dict:
     }
 
 
-def compute_prsi(events: list[dict], period_days: int) -> dict:
+def compute_prsi(
+    events: list[dict],
+    c_start: datetime, c_end: datetime,
+    p_start: datetime, p_end: datetime,
+) -> dict:
     """Pull Request Size = avg lines changed per merged MR (changes_count proxy)."""
     def _prsi(start: datetime, end: datetime) -> float:
         sizes = [
@@ -207,8 +209,6 @@ def compute_prsi(events: list[dict], period_days: int) -> dict:
         ]
         return _mean([float(s) for s in sizes])
 
-    c_start, c_end = _current_period(period_days)
-    p_start, p_end = _previous_period(period_days)
     return {
         "current": _prsi(c_start, c_end),
         "previous": _prsi(p_start, p_end),
@@ -216,7 +216,11 @@ def compute_prsi(events: list[dict], period_days: int) -> dict:
     }
 
 
-def compute_twip(events: list[dict], period_days: int) -> dict:
+def compute_twip(
+    events: list[dict],
+    c_start: datetime, c_end: datetime,
+    p_start: datetime, p_end: datetime,
+) -> dict:
     """Team Work in Progress = count of in-progress issues at reference time."""
     def _twip(reference: datetime) -> float:
         count = 0
@@ -235,16 +239,18 @@ def compute_twip(events: list[dict], period_days: int) -> dict:
                     count += 1
         return float(count)
 
-    now = _now()
-    prev_reference = now - timedelta(days=period_days)
     return {
-        "current": _twip(now),
-        "previous": _twip(prev_reference),
+        "current": _twip(c_end),
+        "previous": _twip(p_end),
         "unit": "issues",
     }
 
 
-def compute_bur(events: list[dict], period_days: int) -> dict:
+def compute_bur(
+    events: list[dict],
+    c_start: datetime, c_end: datetime,
+    p_start: datetime, p_end: datetime,
+) -> dict:
     """Burnout Rate proxy = % of active engineers with >3 after-hours commits."""
     def _bur(start: datetime, end: datetime) -> float:
         period_commits = _commits(events, start, end)
@@ -262,8 +268,6 @@ def compute_bur(events: list[dict], period_days: int) -> dict:
         at_risk = sum(1 for s in by_author.values() if s["after_hours"] > 3)
         return (at_risk / total) * 100
 
-    c_start, c_end = _current_period(period_days)
-    p_start, p_end = _previous_period(period_days)
     return {
         "current": _bur(c_start, c_end),
         "previous": _bur(p_start, p_end),
@@ -271,7 +275,11 @@ def compute_bur(events: list[dict], period_days: int) -> dict:
     }
 
 
-def compute_cqi(events: list[dict], period_days: int) -> dict:
+def compute_cqi(
+    events: list[dict],
+    c_start: datetime, c_end: datetime,
+    p_start: datetime, p_end: datetime,
+) -> dict:
     """Code Quality Index proxy = pipeline success rate (%)."""
     def _cqi(pipes: list[dict]) -> float:
         if not pipes:
@@ -279,8 +287,6 @@ def compute_cqi(events: list[dict], period_days: int) -> dict:
         successful = sum(1 for p in pipes if p["attributes"].get("status") == "success")
         return (successful / len(pipes)) * 100
 
-    c_start, c_end = _current_period(period_days)
-    p_start, p_end = _previous_period(period_days)
     return {
         "current": _cqi(_pipelines(events, c_start, c_end)),
         "previous": _cqi(_pipelines(events, p_start, p_end)),
@@ -288,7 +294,11 @@ def compute_cqi(events: list[dict], period_days: int) -> dict:
     }
 
 
-def compute_mic(events: list[dict], period_days: int) -> dict:
+def compute_mic(
+    events: list[dict],
+    c_start: datetime, c_end: datetime,
+    p_start: datetime, p_end: datetime,
+) -> dict:
     """Maintainability Issue Count = open bugs older than 14 days."""
     def _mic(reference: datetime) -> float:
         cutoff = reference - timedelta(days=14)
@@ -303,11 +313,9 @@ def compute_mic(events: list[dict], period_days: int) -> dict:
                 count += 1
         return float(count)
 
-    now = _now()
-    prev_reference = now - timedelta(days=period_days)
     return {
-        "current": _mic(now),
-        "previous": _mic(prev_reference),
+        "current": _mic(c_end),
+        "previous": _mic(p_end),
         "unit": "issues",
     }
 
@@ -316,7 +324,11 @@ def compute_mic(events: list[dict], period_days: int) -> dict:
 # Added metrics (Change 1)
 # ---------------------------------------------------------------------------
 
-def compute_bf(events: list[dict], period_days: int) -> dict:
+def compute_bf(
+    events: list[dict],
+    c_start: datetime, c_end: datetime,
+    p_start: datetime, p_end: datetime,
+) -> dict:
     """
     Bus Factor — individual sustainability (individual dimension).
     Formula: % of total commits authored by the single top contributor.
@@ -337,8 +349,6 @@ def compute_bf(events: list[dict], period_days: int) -> dict:
         top = max(by_author.values())
         return (top / total) * 100
 
-    c_start, c_end = _current_period(period_days)
-    p_start, p_end = _previous_period(period_days)
     return {
         "current": _bf(c_start, c_end),
         "previous": _bf(p_start, p_end),
@@ -346,7 +356,11 @@ def compute_bf(events: list[dict], period_days: int) -> dict:
     }
 
 
-def compute_pr_count(events: list[dict], period_days: int) -> dict:
+def compute_pr_count(
+    events: list[dict],
+    c_start: datetime, c_end: datetime,
+    p_start: datetime, p_end: datetime,
+) -> dict:
     """
     Pull Request Count — activity metric.
     Formula: count of MRs created in period, split by state (open/merged/closed).
@@ -366,8 +380,6 @@ def compute_pr_count(events: list[dict], period_days: int) -> dict:
                 breakdown["open"] += 1
         return float(len(period_mrs)), breakdown
 
-    c_start, c_end = _current_period(period_days)
-    p_start, p_end = _previous_period(period_days)
     c_count, c_breakdown = _pr_count(c_start, c_end)
     p_count, _ = _pr_count(p_start, p_end)
     return {
@@ -378,14 +390,16 @@ def compute_pr_count(events: list[dict], period_days: int) -> dict:
     }
 
 
-def compute_blds(events: list[dict], period_days: int) -> dict:
+def compute_blds(
+    events: list[dict],
+    c_start: datetime, c_end: datetime,
+    p_start: datetime, p_end: datetime,
+) -> dict:
     """
     Build Count — pipeline execution volume.
     Formula: count of all pipeline executions in period.
     Source: GitLab pipelines (entity_type='pipeline')
     """
-    c_start, c_end = _current_period(period_days)
-    p_start, p_end = _previous_period(period_days)
     return {
         "current": float(len(_pipelines(events, c_start, c_end))),
         "previous": float(len(_pipelines(events, p_start, p_end))),
@@ -393,16 +407,17 @@ def compute_blds(events: list[dict], period_days: int) -> dict:
     }
 
 
-def compute_pipeline_status_breakdown(events: list[dict], period_days: int) -> dict:
+def compute_pipeline_status_breakdown(
+    events: list[dict],
+    c_start: datetime, c_end: datetime,
+    p_start: datetime, p_end: datetime,
+) -> dict:
     """
     Pipeline Status Breakdown — for trend chart visualisation.
     Formula: count of pipelines per status (success/failed/canceled) per day.
     Source: GitLab pipelines (entity_type='pipeline')
     Note: not registered in METRIC_FUNCTIONS; call directly for chart data.
     """
-    c_start, c_end = _current_period(period_days)
-    p_start, p_end = _previous_period(period_days)
-
     all_pipes = _pipelines(events, c_start, c_end)
 
     by_day: dict[str, dict[str, int]] = {}
@@ -476,9 +491,17 @@ def parse_events(raw_events: list) -> list[dict]:
     return result
 
 
-def compute_all(raw_events: list, period_days: int, codes: list[str] = None) -> list[dict]:
-    """Run metric functions and return a list of metric result dicts.
-    Each dict: {metric_code, current_value, previous_value, unit}
+def compute_all(
+    raw_events: list,
+    c_start: datetime,
+    c_end: datetime,
+    p_start: datetime,
+    p_end: datetime,
+    codes: list[str] = None,
+) -> list[dict]:
+    """Run metric functions for the given date ranges and return results.
+
+    Each result dict: {metric_code, current_value, previous_value, unit}
     If codes is provided, only those metrics are computed.
     """
     events = parse_events(raw_events)
@@ -487,7 +510,7 @@ def compute_all(raw_events: list, period_days: int, codes: list[str] = None) -> 
         if codes and code not in codes:
             continue
         try:
-            out = fn(events, period_days)
+            out = fn(events, c_start, c_end, p_start, p_end)
             results.append({
                 "metric_code": code,
                 "current_value": out["current"],

@@ -2,7 +2,7 @@ import logging
 
 import httpx
 
-from backend.ingestion.base import GitAdapter
+from backend.ingestion.base import GitAdapter, clean_commit_message
 from backend.ingestion.normaliser import (
     normalise_github_pipeline,
     normalise_github_mr,
@@ -140,7 +140,7 @@ class GitHubAdapter(GitAdapter):
                 raise RuntimeError(f"GitHub request failed: {e}") from e
 
             commit_messages = [
-                (c.get("commit", {}).get("message") or "").split("\n")[0][:100]
+                clean_commit_message(c.get("commit", {}).get("message") or "")
                 for c in commits_raw
             ]
 

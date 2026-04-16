@@ -5,7 +5,7 @@ from typing import List, Optional
 
 logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -21,12 +21,22 @@ from backend.pipeline.call16_formula import run_call16
 from backend.pipeline.snapshot import build_snapshot
 from backend.schemas.profile import DataSourceConfig
 from backend.schemas.snapshot import MetricRecord
+from backend.schemas.time_window import TimeWindow, get_ingest_since, resolve_time_window
 
 router = APIRouter(tags=["metrics"])
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+class IngestRequest(BaseModel):
+    time_window: Optional[TimeWindow] = None
+
+
+class ComputeRequest(BaseModel):
+    time_window: Optional[TimeWindow] = None
+    metric_codes: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -36,7 +46,8 @@ def _now_iso() -> str:
 @router.post("/api/ingest/{profile_id}")
 async def ingest(
     profile_id: str,
-    period_days: int = Query(default=14),
+    body: IngestRequest = Body(default=IngestRequest()),
+    period_days: int = Query(default=30),
     db: Session = Depends(get_db),
 ):
     profile = db.query(Profile).filter(Profile.id == profile_id).first()
@@ -47,13 +58,22 @@ async def ingest(
     config = DataSourceConfig(**config_dict)
     data_sources = json.loads(profile.data_sources)
 
+    # Resolve fetch window
+    if body.time_window:
+        fetch_since_dt = get_ingest_since(body.time_window)
+    else:
+        # Fallback: fetch 2× period_days to cover both current and previous periods
+        fetch_since_dt = datetime.now(timezone.utc) - timedelta(days=period_days * 2)
+    since = fetch_since_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    since_date = fetch_since_dt.strftime("%Y-%m-%d")
+    until_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
     all_events: list[dict] = []
     errors: list[str] = []
 
     git_ids = config.git_project_ids  # property — returns the right list for the active platform
     if git_ids:
         try:
-            since = (datetime.now(timezone.utc) - timedelta(days=period_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
             adapter = get_git_adapter(config.git_platform, config.git_base_url)
             failed_git = 0
             for pid in git_ids:
@@ -81,7 +101,7 @@ async def ingest(
             )
         else:
             try:
-                events = await fetch_jira_data(profile_id, period_days, config)
+                events = await fetch_jira_data(profile_id, config, since_date, until_date)
                 all_events.extend(events)
             except RuntimeError as e:
                 errors.append(str(e))
@@ -92,7 +112,9 @@ async def ingest(
             detail={"error": "All configured data sources failed — check project IDs and credentials"},
         )
 
-    # Persist raw events
+    # Replace raw events for this profile (clean re-ingest)
+    db.query(RawEvent).filter(RawEvent.profile_id == profile_id).delete()
+
     now = _now_iso()
     for e in all_events:
         row = RawEvent(
@@ -118,7 +140,8 @@ async def ingest(
 @router.post("/api/metrics/compute/{profile_id}")
 def compute_metrics(
     profile_id: str,
-    period_days: int = Query(default=14),
+    body: ComputeRequest = Body(default=ComputeRequest()),
+    period_days: int = Query(default=30),
     metric_codes: str = Query(default=""),
     db: Session = Depends(get_db),
 ):
@@ -132,12 +155,32 @@ def compute_metrics(
         .all()
     )
 
-    codes = [c.strip() for c in metric_codes.split(",") if c.strip()] if metric_codes else None
-    results = compute_all(raw_events, period_days, codes=codes)
+    # Resolve date ranges — use project_start from earliest raw event for full_history
+    if body.time_window:
+        project_start = None
+        if body.time_window.mode == "full_history" and raw_events:
+            timestamps = [e.timestamp for e in raw_events if e.timestamp]
+            if timestamps:
+                earliest_iso = min(timestamps)
+                try:
+                    project_start = datetime.fromisoformat(earliest_iso.replace("Z", "+00:00"))
+                except Exception:
+                    pass
+        c_start, c_end, p_start, p_end = resolve_time_window(body.time_window, project_start)
+    else:
+        # Fallback to period_days
+        now = datetime.now(timezone.utc)
+        c_end = now
+        c_start = now - timedelta(days=period_days)
+        p_end = c_start
+        p_start = c_start - timedelta(days=period_days)
+
+    effective_period_days = max(1, int((c_end - c_start).days))
+    codes_list = [c.strip() for c in (body.metric_codes or metric_codes).split(",") if c.strip()] or None
+    results = compute_all(raw_events, c_start, c_end, p_start, p_end, codes=codes_list)
 
     if not results:
-        import logging
-        logging.getLogger(__name__).warning("compute_all returned 0 metrics for profile %s", profile_id)
+        logger.warning("compute_all returned 0 metrics for profile %s", profile_id)
 
     now = _now_iso()
     for r in results:
@@ -147,7 +190,7 @@ def compute_metrics(
             current_value=r["current_value"],
             previous_value=r["previous_value"],
             unit=r["unit"],
-            period_days=period_days,
+            period_days=effective_period_days,
             computed_at=now,
         )
         db.add(row)

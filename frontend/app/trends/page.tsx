@@ -110,10 +110,23 @@ function TrendsContent() {
   const params    = useSearchParams();
   const profileId = params.get("profile_id") ?? "";
 
-  const [metrics, setMetrics]   = useState<MetricRecord[]>([]);
-  const [history, setHistory]   = useState<MetricHistory[]>([]);
-  const [loading, setLoading]   = useState(true);
-  const [error, setError]       = useState("");
+  const [metrics, setMetrics]       = useState<MetricRecord[]>([]);
+  const [history, setHistory]       = useState<MetricHistory[]>([]);
+  const [loading, setLoading]       = useState(true);
+  const [error, setError]           = useState("");
+  const [periodBoundary, setPeriodBoundary] = useState<string | null>(null);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem("tw_c_start");
+      if (stored) {
+        // Convert ISO datetime to YYYY-MM-DD for Recharts XAxis comparison
+        setPeriodBoundary(stored.slice(0, 10));
+      }
+    } catch {
+      // localStorage unavailable
+    }
+  }, []);
 
   useEffect(() => {
     if (!profileId) { setLoading(false); return; }
@@ -238,6 +251,9 @@ function TrendsContent() {
                   />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
                   <ReferenceLine y={0.15} stroke="#D97706" strokeDasharray="4 4" label={{ value: "CFR warn 0.15%", fontSize: 10, fill: "#D97706" }} />
+                  {periodBoundary && (
+                    <ReferenceLine x={periodBoundary} stroke="#1B6EF3" strokeDasharray="6 3" strokeWidth={1.5} label={{ value: "current period start", fontSize: 9, fill: "#1B6EF3", position: "insideTopRight" }} />
+                  )}
                   <Line type="monotone" dataKey="CFR" stroke="#DC2626" strokeWidth={2} dot={false} name="CFR (%)" />
                   <Line type="monotone" dataKey="CQI" stroke="#1B6EF3" strokeWidth={2} dot={false} name="CQI (%)" />
                 </LineChart>
@@ -297,6 +313,9 @@ function TrendsContent() {
                   <YAxis tick={{ fontSize: 10, fill: "#94a3b8" }} />
                   <Tooltip formatter={(v: number) => [`${fmtVal(v, 0)}h`, "MTTR"]} contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e2e8f0" }} />
                   <ReferenceLine y={24} stroke="#D97706" strokeDasharray="4 4" label={{ value: "warn 24h", fontSize: 10, fill: "#D97706" }} />
+                  {periodBoundary && (
+                    <ReferenceLine x={periodBoundary} stroke="#1B6EF3" strokeDasharray="6 3" strokeWidth={1.5} label={{ value: "current period start", fontSize: 9, fill: "#1B6EF3", position: "insideTopRight" }} />
+                  )}
                   <Line type="monotone" dataKey="value" stroke="#1B6EF3" strokeWidth={2} dot={false} name="MTTR (h)" />
                 </LineChart>
               </ResponsiveContainer>
@@ -381,6 +400,9 @@ function TrendsContent() {
                   <Tooltip formatter={(v: number) => [`${fmtVal(v)}%`, "BUR"]} contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e2e8f0" }} />
                   <ReferenceLine y={10} stroke="#D97706" strokeDasharray="4 4" label={{ value: "warn 10%", fontSize: 10, fill: "#D97706" }} />
                   <ReferenceLine y={25} stroke="#DC2626" strokeDasharray="4 4" label={{ value: "breach 25%", fontSize: 10, fill: "#DC2626" }} />
+                  {periodBoundary && (
+                    <ReferenceLine x={periodBoundary} stroke="#1B6EF3" strokeDasharray="6 3" strokeWidth={1.5} label={{ value: "current period start", fontSize: 9, fill: "#1B6EF3", position: "insideTopRight" }} />
+                  )}
                   <Line type="monotone" dataKey="value" stroke="#16A34A" strokeWidth={2} dot={false} name="BUR (%)" />
                 </LineChart>
               </ResponsiveContainer>
