@@ -41,6 +41,14 @@ def _mean(values: list[float]) -> float:
     return sum(values) / len(values) if values else 0.0
 
 
+def _mean_or_none(values: list[float]) -> float | None:
+    """Like _mean but returns None when the list is empty.
+    Used for metrics where 0 is indistinguishable from 'no data'
+    (e.g. MTTR, PRCT, LTfC — a 0-hour average is meaningless without events).
+    """
+    return sum(values) / len(values) if values else None
+
+
 # ---------------------------------------------------------------------------
 # Event helpers
 # ---------------------------------------------------------------------------
@@ -125,8 +133,10 @@ def compute_mttr(
     c_start: datetime, c_end: datetime,
     p_start: datetime, p_end: datetime,
 ) -> dict:
-    """Mean Time to Recover = avg hours from incident open to resolved."""
-    def _mttr(start: datetime, end: datetime) -> float:
+    """Mean Time to Recover = avg hours from incident open to resolved.
+    Returns None when no incidents are found — 0 would be misleading.
+    """
+    def _mttr(start: datetime, end: datetime) -> float | None:
         resolved = [
             e for e in _issues(events)
             if e["attributes"].get("is_incident")
@@ -139,7 +149,7 @@ def compute_mttr(
             resolved_dt = _parse_dt(issue["attributes"]["resolved_at"])
             if created_dt and resolved_dt:
                 deltas.append((resolved_dt - created_dt).total_seconds() / 3600)
-        return _mean(deltas)
+        return _mean_or_none(deltas)
 
     return {
         "current": _mttr(c_start, c_end),
@@ -154,17 +164,16 @@ def compute_ltfc(
     p_start: datetime, p_end: datetime,
 ) -> dict:
     """Lead Time for Changes = avg hours from MR created_at to merged_at.
-    Note: GitLab's commits API does not tag commits with branch names, so
-    MR created_at is used as the best available proxy for 'first commit on branch'.
+    Returns None when no merged MRs exist in the period.
     """
-    def _ltfc(start: datetime, end: datetime) -> float:
+    def _ltfc(start: datetime, end: datetime) -> float | None:
         deltas = []
         for m in _merged_mrs_in(_mrs(events), start, end):
             created_dt = _parse_dt(m["timestamp"])
             merged_dt = _parse_dt(m["attributes"]["merged_at"])
             if created_dt and merged_dt:
                 deltas.append((merged_dt - created_dt).total_seconds() / 3600)
-        return _mean(deltas)
+        return _mean_or_none(deltas)
 
     return {
         "current": _ltfc(c_start, c_end),
@@ -178,15 +187,17 @@ def compute_prct(
     c_start: datetime, c_end: datetime,
     p_start: datetime, p_end: datetime,
 ) -> dict:
-    """Pull Request Cycle Time = avg hours from MR created to merged."""
-    def _prct(start: datetime, end: datetime) -> float:
+    """Pull Request Cycle Time = avg hours from MR created to merged.
+    Returns None when no merged MRs exist in the period.
+    """
+    def _prct(start: datetime, end: datetime) -> float | None:
         deltas = []
         for m in _merged_mrs_in(_mrs(events), start, end):
             created_dt = _parse_dt(m["timestamp"])
             merged_dt = _parse_dt(m["attributes"]["merged_at"])
             if created_dt and merged_dt:
                 deltas.append((merged_dt - created_dt).total_seconds() / 3600)
-        return _mean(deltas)
+        return _mean_or_none(deltas)
 
     return {
         "current": _prct(c_start, c_end),
@@ -200,14 +211,16 @@ def compute_prsi(
     c_start: datetime, c_end: datetime,
     p_start: datetime, p_end: datetime,
 ) -> dict:
-    """Pull Request Size = avg lines changed per merged MR (changes_count proxy)."""
-    def _prsi(start: datetime, end: datetime) -> float:
+    """Pull Request Size = avg lines changed per merged MR (changes_count proxy).
+    Returns None when no merged MRs with size data exist.
+    """
+    def _prsi(start: datetime, end: datetime) -> float | None:
         sizes = [
             m["attributes"]["changes_count"]
             for m in _merged_mrs_in(_mrs(events), start, end)
             if m["attributes"].get("changes_count") is not None
         ]
-        return _mean([float(s) for s in sizes])
+        return _mean_or_none([float(s) for s in sizes])
 
     return {
         "current": _prsi(c_start, c_end),
