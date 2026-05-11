@@ -23,42 +23,42 @@ SELECTION_MATRIX: dict[tuple[str, str, str], dict[str, list[str]]] = {
     ("maximize_reliability", "release_readiness", "mission_critical"): {
         "devops":         ["CFR", "DF", "MTTR", "CQI"],
         "business":       ["CSAT_MANUAL", "SLA_MANUAL"],
-        "sustainability": ["BUR", "DSAT_MANUAL", "MIC", "BF"],
+        "sustainability": ["BUR", "AHCR", "DSAT_MANUAL", "MIC", "BF"],
     },
 
     # UC1b — Release readiness, reliability focus, business important
     ("maximize_reliability", "release_readiness", "business_important"): {
         "devops":         ["CFR", "DF", "MTTR", "CQI"],
         "business":       ["CSAT_MANUAL", "SLA_MANUAL"],
-        "sustainability": ["BUR", "DSAT_MANUAL", "MIC", "BF"],
+        "sustainability": ["BUR", "AHCR", "DSAT_MANUAL", "MIC", "BF"],
     },
 
     # UC2 — Sprint planning, delivery speed focus
     ("maximize_delivery_speed", "sprint_planning", "business_important"): {
         "devops":         ["LTfC", "PRCT", "PRSi", "TWiP", "DF"],
         "business":       ["VEL_MANUAL", "WIV_MANUAL"],
-        "sustainability": ["BUR", "MIC"],
+        "sustainability": ["BUR", "AHCR", "MIC"],
     },
 
     # UC3 — Team health review, wellbeing focus
     ("improve_developer_wellbeing", "team_health_review", "business_important"): {
         "devops":         ["MTTR", "CFR", "PRCT"],
         "business":       ["GOAL_MANUAL"],
-        "sustainability": ["BUR", "DSAT_MANUAL", "MIC", "BF"],
+        "sustainability": ["BUR", "AHCR", "DSAT_MANUAL", "MIC", "BF"],
     },
 
     # UC4 — Stakeholder reporting, CTO audience
     ("maximize_reliability", "stakeholder_reporting", "mission_critical"): {
         "devops":         ["DF", "CFR", "MTTR", "LTfC"],
         "business":       ["CSAT_MANUAL", "SLA_MANUAL", "TCO_MANUAL"],
-        "sustainability": ["DSAT_MANUAL", "BUR", "MIC"],
+        "sustainability": ["DSAT_MANUAL", "BUR", "AHCR", "MIC"],
     },
 
     # UC5 — Security posture review
     ("improve_security_posture", "release_readiness", "mission_critical"): {
         "devops":         ["CFR", "CQI", "MIC", "PRCT"],
         "business":       ["SLA_MANUAL", "CSAT_MANUAL"],
-        "sustainability": ["BUR", "MIC"],
+        "sustainability": ["BUR", "AHCR", "MIC"],
     },
 }
 
@@ -66,7 +66,7 @@ SELECTION_MATRIX: dict[tuple[str, str, str], dict[str, list[str]]] = {
 DEFAULT_SELECTION: dict[str, list[str]] = {
     "devops":         ["CFR", "DF", "MTTR", "LTfC"],
     "business":       ["CSAT_MANUAL"],
-    "sustainability": ["BUR", "DSAT_MANUAL"],
+    "sustainability": ["BUR", "AHCR", "DSAT_MANUAL"],
 }
 
 

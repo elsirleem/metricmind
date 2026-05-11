@@ -329,7 +329,9 @@ export function extractRepoSlug(githubUrl: string): string | null {
 
 export async function exploreProject(
   projectUrl: string,
-  jiraUrl?: string
+  jiraUrl?: string,
+  exploreDays?: number,
+  exploreSince?: string,
 ): Promise<ExploreResult> {
   const platform = detectPlatform(projectUrl);
   const baseUrl = new URL(projectUrl).origin;
@@ -355,6 +357,12 @@ export async function exploreProject(
       jira_base_url: jiraUrl || null,
       jira_project_key: null,
     };
+  }
+
+  if (exploreSince) {
+    body.explore_since = exploreSince;
+  } else if (exploreDays) {
+    body.explore_days = exploreDays;
   }
 
   const res = await fetch(`${API_URL}/api/intelligence/explore`, {

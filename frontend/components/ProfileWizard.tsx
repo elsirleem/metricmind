@@ -22,6 +22,12 @@ const PRIMARY_GOALS = [
   "improve_developer_wellbeing", "improve_security_posture", "increase_feature_adoption",
 ];
 const BUSINESS_CRITICALITIES = ["mission_critical", "business_important", "internal_tooling"];
+
+const CRITICALITY_LABELS: Record<string, string> = {
+  mission_critical:    "High — outage causes revenue loss, safety risk, or SLA breach",
+  business_important:  "Medium — outage causes significant disruption but has workarounds",
+  internal_tooling:    "Low — outage causes inconvenience; operations continue without it",
+};
 const DECISION_TYPES = ["release_readiness", "incident_response", "sprint_planning", "team_health_review", "stakeholder_reporting"];
 const TIME_HORIZONS = ["immediate", "short_term", "strategic"];
 
@@ -86,8 +92,9 @@ function humanise(s: string) {
 // Shared form primitives
 // ---------------------------------------------------------------------------
 
-function FormSelect({ label, value, options, onChange, required }: {
+function FormSelect({ label, value, options, onChange, required, optionLabels }: {
   label: string; value: string; options: string[]; onChange: (v: string) => void; required?: boolean;
+  optionLabels?: Record<string, string>;
 }) {
   return (
     <div>
@@ -99,7 +106,7 @@ function FormSelect({ label, value, options, onChange, required }: {
         title={label}
       >
         <option value="">Select…</option>
-        {options.map((o) => <option key={o} value={o}>{humanise(o)}</option>)}
+        {options.map((o) => <option key={o} value={o}>{optionLabels?.[o] ?? humanise(o)}</option>)}
       </select>
     </div>
   );
@@ -139,6 +146,9 @@ export default function ProfileWizard() {
   const [exploreResult, setExploreResult] = useState<ExploreResult | null>(null);
   const [northStarMetricCodes, setNorthStarMetricCodes] = useState<string[]>([]);
   const [step0Completed, setStep0Completed] = useState(false);
+  // Explore window — how far back Call 0 looks at commits/PRs
+  const [exploreWindowMode, setExploreWindowMode] = useState<"30" | "60" | "90" | "custom">("30");
+  const [exploreCustomSince, setExploreCustomSince] = useState("");
 
   // ── Step 1 phases ──
   const [phase, setPhase] = useState<"input" | "questions" | "done">("input");
@@ -233,7 +243,9 @@ export default function ProfileWizard() {
     setStep0Phase("loading");
     setError("");
     try {
-      const result = await exploreProject(step0GitlabUrl, step0JiraUrl || undefined);
+      const exploreDays = exploreWindowMode !== "custom" ? parseInt(exploreWindowMode, 10) : undefined;
+      const exploreSince = exploreWindowMode === "custom" && exploreCustomSince ? exploreCustomSince : undefined;
+      const result = await exploreProject(step0GitlabUrl, step0JiraUrl || undefined, exploreDays, exploreSince);
       setExploreResult(result);
       setStep0Phase("results");
     } catch (e: unknown) {
@@ -524,10 +536,42 @@ export default function ProfileWizard() {
                   onChange={setStep0JiraUrl}
                   placeholder="https://yourorg.atlassian.net"
                 />
+                {/* Explore window */}
+                <div>
+                  <label className="label">Commit history to analyse</label>
+                  <div className="flex gap-2 flex-wrap">
+                    {(["30", "60", "90", "custom"] as const).map((opt) => (
+                      <button
+                        key={opt}
+                        type="button"
+                        onClick={() => setExploreWindowMode(opt)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                          exploreWindowMode === opt
+                            ? "bg-[#1B6EF3] text-white border-[#1B6EF3]"
+                            : "bg-white text-slate-600 border-slate-200 hover:border-[#1B6EF3]"
+                        }`}
+                      >
+                        {opt === "custom" ? "Custom" : `${opt} days`}
+                      </button>
+                    ))}
+                  </div>
+                  {exploreWindowMode === "custom" && (
+                    <div className="mt-2">
+                      <input
+                        type="date"
+                        value={exploreCustomSince}
+                        onChange={(e) => setExploreCustomSince(e.target.value)}
+                        className="input"
+                        title="Fetch commits from this date onwards"
+                      />
+                      <p className="text-xs text-slate-400 mt-1">Analyse commits from this date to today</p>
+                    </div>
+                  )}
+                </div>
               </div>
               <button
                 onClick={handleExploreProject}
-                disabled={!step0GitlabUrl.trim()}
+                disabled={!step0GitlabUrl.trim() || (exploreWindowMode === "custom" && !exploreCustomSince)}
                 className="btn-primary mt-5 w-full py-2.5"
               >
                 Analyse project →
@@ -617,13 +661,6 @@ export default function ProfileWizard() {
                 </div>
               </div>
 
-              {/* Confidence badge */}
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-500">Analysis confidence:</span>
-                <span className={`badge text-xs ${exploreResult.confidence === "HIGH" ? "bg-emerald-50 text-emerald-700" : exploreResult.confidence === "MEDIUM" ? "bg-blue-50 text-blue-700" : "bg-amber-50 text-amber-700"}`}>
-                  {exploreResult.confidence}
-                </span>
-              </div>
 
               <button
                 onClick={handleContinueFromStep0}
@@ -736,7 +773,7 @@ export default function ProfileWizard() {
               <FormSelect label="Stakeholder role"     value={profile.stakeholder_role ?? ""}     options={STAKEHOLDER_ROLES}      onChange={(v) => set("stakeholder_role", v)}     required />
               <FormSelect label="Primary goal"         value={profile.primary_goal ?? ""}         options={PRIMARY_GOALS}          onChange={(v) => set("primary_goal", v)}         required />
               <FormSelect label="Secondary goal"       value={profile.secondary_goal ?? ""}       options={PRIMARY_GOALS}          onChange={(v) => set("secondary_goal", v || null)} />
-              <FormSelect label="Business criticality" value={profile.business_criticality ?? ""} options={BUSINESS_CRITICALITIES}  onChange={(v) => set("business_criticality", v)} required />
+              <FormSelect label="Business criticality" value={profile.business_criticality ?? ""} options={BUSINESS_CRITICALITIES}  onChange={(v) => set("business_criticality", v)} required optionLabels={CRITICALITY_LABELS} />
               <FormSelect label="Decision type"        value={profile.decision_type ?? ""}        options={DECISION_TYPES}         onChange={(v) => set("decision_type", v)}        required />
               <FormSelect label="Time horizon"         value={profile.time_horizon ?? ""}         options={TIME_HORIZONS}          onChange={(v) => set("time_horizon", v)}         required />
             </div>
@@ -1003,7 +1040,7 @@ export default function ProfileWizard() {
               <div>
                 <h2 className="text-lg font-bold text-slate-900 mb-1">Selected metrics</h2>
                 <p className="text-sm text-slate-500">
-                  AI-recommended metrics for your use case. Remove any that are not relevant, or add more from the catalog.
+                  Recommended metrics for your use case. Remove any that are not relevant, or add more from the catalog.
                 </p>
               </div>
               <button

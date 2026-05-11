@@ -116,16 +116,19 @@ class GitHubAdapter(GitAdapter):
 
         return events
 
-    async def explore(self, project_id: str) -> dict:
+    async def explore(self, project_id: str, since: str | None = None) -> dict:
         """Fetch recent commits + PRs for LLM-based project exploration."""
         api = self._api_base(project_id)
         headers = self._headers()
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
+                commit_params: dict = {"per_page": 100} if since else {"per_page": 30}
+                if since:
+                    commit_params["since"] = since
                 resp = await client.get(
                     f"{api}/commits",
-                    params={"per_page": 30},
+                    params=commit_params,
                     headers=headers,
                 )
                 if resp.status_code == 401:

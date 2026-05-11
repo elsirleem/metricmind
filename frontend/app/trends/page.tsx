@@ -269,12 +269,13 @@ function TrendsContent() {
             <h2 className="text-sm font-bold uppercase tracking-wide" style={{ color: "#0A1628" }}>Team Sustainability</h2>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-5">
-            {loading ? [1,2,3].map((i) => <div key={i} className="h-[88px] bg-slate-100 rounded-xl animate-pulse" />) : (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+            {loading ? [1,2,3,4].map((i) => <div key={i} className="h-[88px] bg-slate-100 rounded-xl animate-pulse" />) : (
               <>
-                <SummaryTile label="BUR" value={fmtVal(getMetricVal("BUR")?.current_value)}    unit="% burnout rate"   status={getMetricVal("BUR")?.threshold_status} />
-                <SummaryTile label="MIC" value={fmtVal(getMetricVal("MIC")?.current_value, 0)} unit="open stale bugs"  status={getMetricVal("MIC")?.threshold_status} />
-                <SummaryTile label="BF"  value={fmtVal(getMetricVal("BF")?.current_value)}     unit="% bus factor"     status={getMetricVal("BF")?.threshold_status} />
+                <SummaryTile label="AHCR" value={fmtVal(getMetricVal("AHCR")?.current_value)}    unit="% commits after hours"    status={getMetricVal("AHCR")?.threshold_status} />
+                <SummaryTile label="BUR"  value={fmtVal(getMetricVal("BUR")?.current_value)}     unit="% team at risk (>3 AH)"   status={getMetricVal("BUR")?.threshold_status} />
+                <SummaryTile label="MIC"  value={fmtVal(getMetricVal("MIC")?.current_value, 0)}  unit="open stale bugs"          status={getMetricVal("MIC")?.threshold_status} />
+                <SummaryTile label="BF"   value={fmtVal(getMetricVal("BF")?.current_value)}      unit="% bus factor"             status={getMetricVal("BF")?.threshold_status} />
               </>
             )}
           </div>

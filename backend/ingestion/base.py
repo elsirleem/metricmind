@@ -58,9 +58,13 @@ class GitAdapter(ABC):
         ...
 
     @abstractmethod
-    async def explore(self, project_id: str) -> dict:
+    async def explore(self, project_id: str, since: str | None = None) -> dict:
         """
         Fetch recent activity for LLM-based project exploration (Call 0).
+
+        since — optional ISO 8601 datetime string; when provided, only commits
+                after this date are fetched.  When None, falls back to the
+                latest per_page items.
 
         Returns:
           { commit_messages: list[str], mr_summaries: list[str] }

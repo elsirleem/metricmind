@@ -44,9 +44,10 @@ METRIC_METADATA: dict[str, dict] = {
     # Manual — Sustainability
     "DSAT_MANUAL":  {"name": "Developer Satisfaction Score","group": "wellbeing", "tier": "sustainability",  "sustainability_dimension": "individual", "higher_is_better": True,  "source": "manual"},
     # Added (Change 1 / snapshot registration)
-    "BF":   {"name": "Bus Factor",         "group": "wellbeing",  "tier": "sustainability", "sustainability_dimension": "individual", "higher_is_better": False, "source": "gitlab"},
-    "BLDS": {"name": "Build Count",        "group": "delivery",   "tier": "devops",         "sustainability_dimension": None,         "higher_is_better": True,  "source": "gitlab"},
-    "PR":   {"name": "Pull Request Count", "group": "delivery",   "tier": "devops",         "sustainability_dimension": None,         "higher_is_better": True,  "source": "gitlab"},
+    "BF":   {"name": "Bus Factor",               "group": "wellbeing",  "tier": "sustainability", "sustainability_dimension": "individual", "higher_is_better": False, "source": "gitlab"},
+    "BLDS": {"name": "Build Count",              "group": "delivery",   "tier": "devops",         "sustainability_dimension": None,         "higher_is_better": True,  "source": "gitlab"},
+    "PR":   {"name": "Pull Request Count",       "group": "delivery",   "tier": "devops",         "sustainability_dimension": None,         "higher_is_better": True,  "source": "gitlab"},
+    "AHCR": {"name": "After-Hours Commit Rate",  "group": "wellbeing",  "tier": "sustainability", "sustainability_dimension": "individual", "higher_is_better": False, "source": "gitlab"},
 }
 
 TREND_THRESHOLD = 0.02  # 2% change required to call improving/degrading

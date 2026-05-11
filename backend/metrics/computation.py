@@ -403,6 +403,31 @@ def compute_pr_count(
     }
 
 
+def compute_ahcr(
+    events: list[dict],
+    c_start: datetime, c_end: datetime,
+    p_start: datetime, p_end: datetime,
+) -> dict:
+    """
+    After-Hours Commit Rate — % of all commits made outside 07:00–20:00 CET/CEST.
+    Complements BUR: BUR tells you which fraction of the *team* is at risk;
+    AHCR tells you what fraction of *all commit activity* happens after hours.
+    Returns None when there are no commits in the period.
+    """
+    def _ahcr(start: datetime, end: datetime) -> float | None:
+        period_commits = _commits(events, start, end)
+        if not period_commits:
+            return None
+        after = sum(1 for c in period_commits if c["attributes"].get("after_hours"))
+        return (after / len(period_commits)) * 100
+
+    return {
+        "current": _ahcr(c_start, c_end),
+        "previous": _ahcr(p_start, p_end),
+        "unit": "%",
+    }
+
+
 def compute_blds(
     events: list[dict],
     c_start: datetime, c_end: datetime,
@@ -476,6 +501,8 @@ METRIC_FUNCTIONS: dict[str, Any] = {
     "BF":   compute_bf,
     "BLDS": compute_blds,
     "PR":   compute_pr_count,
+    # After-hours activity
+    "AHCR": compute_ahcr,
 }
 
 

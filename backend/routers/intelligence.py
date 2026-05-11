@@ -2,7 +2,7 @@ import base64
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
@@ -42,6 +42,13 @@ class ExploreRequest(BaseModel):
     jira_base_url: Optional[str] = None
     jira_project_key: Optional[str] = None
 
+    # Explore window — how far back to fetch commits/PRs for Call 0.
+    # explore_days: preset (30 | 60 | 90).
+    # explore_since: custom ISO date string "YYYY-MM-DD" (takes precedence).
+    # When both absent, fetches latest 30 commits (legacy behaviour).
+    explore_days: Optional[int] = None
+    explore_since: Optional[str] = None
+
 
 @router.post("/explore")
 async def explore_project(body: ExploreRequest):
@@ -73,10 +80,19 @@ async def explore_project(body: ExploreRequest):
             detail={"error": "No project ID provided — pass gitlab_project_id or github_repo_slug"},
         )
 
+    # Resolve explore window → ISO datetime string or None
+    explore_since: str | None = None
+    if body.explore_since:
+        explore_since = body.explore_since + "T00:00:00Z"
+    elif body.explore_days:
+        explore_since = (
+            datetime.now(timezone.utc) - timedelta(days=body.explore_days)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
+
     # Fetch git data via adapter
     adapter = get_git_adapter(platform, base_url)
     try:
-        git_data = await adapter.explore(project_id)
+        git_data = await adapter.explore(project_id, since=explore_since)
     except PermissionError as e:
         raise HTTPException(status_code=400, detail={"error": str(e)})
     except LookupError as e:

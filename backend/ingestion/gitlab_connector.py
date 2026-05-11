@@ -66,16 +66,19 @@ class GitLabAdapter(GitAdapter):
 
         return events
 
-    async def explore(self, project_id: str) -> dict:
+    async def explore(self, project_id: str, since: str | None = None) -> dict:
         """Fetch recent commits + MRs for LLM-based project exploration."""
         headers = self._headers()
         api_base = self._api(project_id)
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
+                commit_params: dict = {"per_page": 100} if since else {"per_page": 30}
+                if since:
+                    commit_params["since"] = since
                 resp = await client.get(
                     f"{api_base}/repository/commits",
-                    params={"per_page": 30},
+                    params=commit_params,
                     headers=headers,
                 )
                 if resp.status_code == 401:

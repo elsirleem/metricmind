@@ -1,5 +1,8 @@
 import json
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+_CET = ZoneInfo("Europe/Berlin")  # handles CET (UTC+1) and CEST (UTC+2) automatically
 
 
 def _now_iso() -> str:
@@ -7,10 +10,16 @@ def _now_iso() -> str:
 
 
 def _is_after_hours(iso_timestamp: str) -> bool:
-    """Return True if the UTC hour is before 07:00 or at/after 20:00."""
+    """Return True if the commit falls outside normal working hours (CET/CEST).
+    Working hours: 09:00–17:00 Monday–Friday (Europe/Berlin).
+    Weekends (Saturday=5, Sunday=6) are always after-hours regardless of time.
+    """
     try:
         dt = datetime.fromisoformat(iso_timestamp.replace("Z", "+00:00"))
-        return dt.hour < 7 or dt.hour >= 20
+        local = dt.astimezone(_CET)
+        if local.weekday() >= 5:          # Saturday or Sunday
+            return True
+        return local.hour < 9 or local.hour >= 17
     except Exception:
         return False
 
