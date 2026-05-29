@@ -98,7 +98,7 @@ Return JSON with questions and partial_profile only.
 PROFILE_SCHEMA_HINT = {
     "team_name": "string",
     "team_type": ["platform_team", "product_team", "infrastructure_team", "security_team"],
-    "stakeholder_role": ["engineering_lead", "product_owner", "cto_vp_engineering", "business_stakeholder"],
+    "stakeholder_role": ["engineer", "engineering_lead", "product_owner", "cto_vp_engineering", "business_analyst"],
     "primary_goal": ["maximize_reliability", "maximize_delivery_speed", "reduce_operational_cost",
                      "improve_developer_wellbeing", "improve_security_posture", "increase_feature_adoption"],
     "secondary_goal": ["maximize_reliability", "maximize_delivery_speed", "reduce_operational_cost",

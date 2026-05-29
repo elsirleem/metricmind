@@ -7,9 +7,14 @@ from backend.ingestion.normaliser import (
     normalise_gitlab_pipeline,
     normalise_gitlab_mr,
     normalise_gitlab_commit,
+    normalise_gitlab_release,
 )
 
 logger = logging.getLogger(__name__)
+
+# Cap per-MR detail calls to avoid blowing through rate limits on busy projects.
+# MRs beyond the cap will have lines_changed=None (excluded from PRSi average).
+MAX_MR_DETAIL_CALLS = 50
 
 
 class GitLabProjectNotFoundError(Exception):
@@ -50,6 +55,13 @@ class GitLabAdapter(GitAdapter):
                 headers,
                 project_id,
             )
+            # Enrich the most recent MAX_MR_DETAIL_CALLS MRs with a real
+            # line-count by fetching their /changes diff. The list endpoint
+            # only gives us a file count; PRSi must be in lines (Cohen).
+            for mr in mrs[:MAX_MR_DETAIL_CALLS]:
+                mr["lines_changed"] = await self._fetch_mr_lines_changed(
+                    client, api_base, mr.get("iid"), headers,
+                )
             for mr in mrs:
                 events.append(normalise_gitlab_mr(mr, profile_id, project_id))
 
@@ -63,6 +75,21 @@ class GitLabAdapter(GitAdapter):
             )
             for c in commits:
                 events.append(normalise_gitlab_commit(c, profile_id, project_id))
+
+            # --- releases (production deployment signal for tag-based teams) ---
+            try:
+                releases = await self._paginate(
+                    client,
+                    f"{api_base}/releases",
+                    {"per_page": 100},
+                    headers,
+                    project_id,
+                )
+                for rel in releases:
+                    events.append(normalise_gitlab_release(rel, profile_id, project_id))
+            except GitLabProjectNotFoundError:
+                # Releases endpoint may be unavailable on older GitLab instances — non-fatal
+                logger.info("GitLab releases endpoint unavailable for %s — releases not ingested", project_id)
 
         return events
 
@@ -132,3 +159,42 @@ class GitLabAdapter(GitAdapter):
             raise GitLabProjectNotFoundError(project_id)
         response.raise_for_status()
         return response.json()
+
+    async def _fetch_mr_lines_changed(
+        self,
+        client: httpx.AsyncClient,
+        api_base: str,
+        iid,
+        headers: dict,
+    ) -> int | None:
+        """Fetch a single MR's diff and count added + deleted lines.
+
+        Returns None when the MR is unavailable or has no diff. Lines starting
+        with '+' (not '+++') are additions; lines starting with '-' (not '---')
+        are deletions. Diff headers are excluded.
+        """
+        if iid is None:
+            return None
+        try:
+            resp = await client.get(
+                f"{api_base}/merge_requests/{iid}/changes",
+                headers=headers,
+                timeout=15.0,
+            )
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+        except Exception as exc:
+            logger.debug("GitLab MR %s line-count fetch failed: %s", iid, exc)
+            return None
+
+        additions = 0
+        deletions = 0
+        for ch in data.get("changes", []):
+            for line in (ch.get("diff") or "").splitlines():
+                if line.startswith("+") and not line.startswith("+++"):
+                    additions += 1
+                elif line.startswith("-") and not line.startswith("---"):
+                    deletions += 1
+        total = additions + deletions
+        return total if total > 0 else None

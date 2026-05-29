@@ -47,13 +47,15 @@ def normalise_gitlab_pipeline(raw: dict, profile_id: str, project_id: str) -> di
 
 def normalise_gitlab_mr(raw: dict, profile_id: str, project_id: str) -> dict:
     author = raw.get("author") or {}
-    changes_count = raw.get("changes_count")
-    # changes_count may arrive as a string from some GitLab versions
-    if changes_count is not None:
-        try:
-            changes_count = int(changes_count)
-        except (ValueError, TypeError):
-            changes_count = None
+    # PR size: prefer the lines_changed value injected by the connector
+    # (computed from the MR's /changes diff). If absent — for MRs beyond
+    # the per-MR detail cap — fall back to None rather than the list
+    # endpoint's changes_count, which is a file count, not lines.
+    changes_count = raw.get("lines_changed")
+    if isinstance(changes_count, (int, float)):
+        changes_count = int(changes_count) if changes_count > 0 else None
+    else:
+        changes_count = None
 
     return {
         "profile_id": profile_id,
@@ -66,10 +68,32 @@ def normalise_gitlab_mr(raw: dict, profile_id: str, project_id: str) -> dict:
             "merged_at": raw.get("merged_at"),
             "closed_at": raw.get("closed_at"),
             "state": raw.get("state"),
+            "title": raw.get("title"),
             "changes_count": changes_count,
             "source_branch": raw.get("source_branch"),
             "target_branch": raw.get("target_branch"),
             "author_id": author.get("id"),
+        }),
+        "ingested_at": _now_iso(),
+    }
+
+
+def normalise_gitlab_release(raw: dict, profile_id: str, project_id: str) -> dict:
+    """A GitLab release wraps a git tag. We record tag name + release date."""
+    timestamp = raw.get("released_at") or raw.get("created_at") or ""
+    return {
+        "profile_id": profile_id,
+        "source": "gitlab",
+        "entity_type": "release",
+        "entity_id": str(raw.get("tag_name") or raw.get("name") or ""),
+        "project_id": str(project_id),
+        "timestamp": timestamp,
+        "attributes": json.dumps({
+            "tag_name": raw.get("tag_name"),
+            "name": raw.get("name"),
+            "released_at": raw.get("released_at"),
+            "created_at": raw.get("created_at"),
+            "commit_sha": (raw.get("commit") or {}).get("id"),
         }),
         "ingested_at": _now_iso(),
     }
@@ -143,13 +167,19 @@ def normalise_github_mr(raw: dict, profile_id: str, project_id: str) -> dict:
         norm_state = "closed"
 
     user = raw.get("user") or {}
-    # changed_files only available on individual PR endpoint (not list)
-    changes_count = raw.get("changed_files")
-    if changes_count is None:
-        additions = raw.get("additions") or 0
-        deletions = raw.get("deletions") or 0
-        if additions + deletions > 0:
-            changes_count = additions + deletions
+    # PR size = lines changed (additions + deletions). These fields are only
+    # populated by the per-PR detail endpoint, not the /pulls list endpoint,
+    # so PRs beyond MAX_PR_DETAIL_CALLS will have changes_count=None. We
+    # deliberately do NOT fall back to changed_files (file count) — file
+    # count and line count are different units and conflating them under
+    # one "lines" label was the source of an earlier measurement bug.
+    additions = raw.get("additions")
+    deletions = raw.get("deletions")
+    if additions is not None or deletions is not None:
+        total = (additions or 0) + (deletions or 0)
+        changes_count = total if total > 0 else None
+    else:
+        changes_count = None
 
     return {
         "profile_id": profile_id,
@@ -162,10 +192,34 @@ def normalise_github_mr(raw: dict, profile_id: str, project_id: str) -> dict:
             "merged_at": merged_at,
             "closed_at": raw.get("closed_at"),
             "state": norm_state,
+            "title": raw.get("title"),
             "changes_count": changes_count,
             "source_branch": (raw.get("head") or {}).get("ref"),
             "target_branch": (raw.get("base") or {}).get("ref"),
             "author_id": user.get("id"),
+        }),
+        "ingested_at": _now_iso(),
+    }
+
+
+def normalise_github_release(raw: dict, profile_id: str, project_id: str) -> dict:
+    """A GitHub release wraps a git tag. We record tag name + published_at date."""
+    timestamp = raw.get("published_at") or raw.get("created_at") or ""
+    return {
+        "profile_id": profile_id,
+        "source": "github",
+        "entity_type": "release",
+        "entity_id": str(raw.get("tag_name") or raw.get("name") or ""),
+        "project_id": str(project_id),
+        "timestamp": timestamp,
+        "attributes": json.dumps({
+            "tag_name": raw.get("tag_name"),
+            "name": raw.get("name"),
+            "published_at": raw.get("published_at"),
+            "created_at": raw.get("created_at"),
+            "target_commitish": raw.get("target_commitish"),
+            "draft": raw.get("draft"),
+            "prerelease": raw.get("prerelease"),
         }),
         "ingested_at": _now_iso(),
     }

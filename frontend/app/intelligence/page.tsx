@@ -11,7 +11,8 @@ import TimeWindowSelector from "@/components/TimeWindowSelector";
 import {
   ReasoningReport, ExplanationOutput,
   TimeWindow, resolveWindowDates,
-  ingestData, computeMetrics, runReasoning, runExplanation, getLatestExplanation,
+  ingestData, computeMetrics, runReasoning, runExplanation,
+  getLatestExplanation, getLatestReport,
 } from "@/lib/api";
 
 const HEALTH_STYLES: Record<string, { bg: string; border: string; dot: string; text: string }> = {
@@ -35,7 +36,11 @@ function IntelligenceContent() {
 
   useEffect(() => {
     if (!profileId) return;
+    // Restore both the explanation (narrative sections) and the reasoning
+    // report (conflicts panel, recommendations) so closing and re-opening
+    // a profile preserves the full Intelligence view.
     getLatestExplanation(profileId).then(setExplanation).catch(() => {});
+    getLatestReport(profileId).then(setReport).catch(() => {});
   }, [profileId]);
 
   const handleRunAnalysis = async () => {

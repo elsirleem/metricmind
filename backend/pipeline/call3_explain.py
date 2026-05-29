@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 
 from pydantic import ValidationError
 
@@ -10,15 +11,38 @@ from backend.schemas.reasoning import ExplanationOutput
 
 logger = logging.getLogger(__name__)
 
+# Strip raw conflict_type identifiers if the LLM leaks them into the human text.
+# Matches "(key_person_risk)", "  (speed_stability) ", etc.
+_CONFLICT_CODE_INLINE = re.compile(
+    r"\s*\((?:key_person_risk|speed_stability|throughput_sustainability|cost_reliability|other)\)",
+    re.IGNORECASE,
+)
+
+
+def _strip_conflict_codes(text: str | None) -> str | None:
+    """Remove any inline (conflict_type) identifiers from human-facing text."""
+    if not isinstance(text, str):
+        return text
+    return _CONFLICT_CODE_INLINE.sub("", text)
+
 SYSTEM_PROMPT_CALL3 = """
 You are a communication layer for a decision intelligence system.
 Translate the reasoning report into a stakeholder-appropriate explanation.
 
 Adapt to stakeholder_role:
-- engineering_lead: use metric codes and values, explain root causes, be direct about severity.
+- engineer: use metric codes and values; focus on what the individual contributor
+  or their squad can act on in the next sprint (concrete code, review, testing,
+  or workflow changes). Explain root causes at the code/process level. Avoid
+  team-management framing — engineers do not set headcount or sprint scope.
+- engineering_lead: use metric codes and values, explain root causes, be direct
+  about severity. Frame recommendations as team-level decisions the lead owns
+  (capacity, prioritisation, process changes).
 - product_owner: frame as sprint/delivery risk, avoid deep technical detail.
 - cto_vp_engineering: frame as business risk, reference declared KPI thresholds explicitly.
-- business_stakeholder: no metric codes, plain language only, max 3 key points.
+- business_analyst: plain language only (no metric codes), but more depth than an
+  executive summary. Use plain-language quantities ("the team shipped 12 releases
+  this month" instead of "DF = 12"). Allow longer key findings and richer narrative
+  because analysts produce write-ups, not single-pane dashboards.
 
 Return a JSON object with exactly these keys:
 - summary: 2 sentences max, overall health and primary concern
@@ -34,7 +58,12 @@ Return a JSON object with exactly these keys:
 Rules:
 - Do not invent data not present in the reasoning report.
 - Do not soften CRITICAL severity findings.
-- Never use metric codes when stakeholder_role is business_stakeholder.
+- Never use metric codes when stakeholder_role is business_analyst.
+- Never print the raw conflict_type identifier (e.g. "key_person_risk",
+  "speed_stability") in the human-readable text. Use the natural-language
+  name only (e.g. "Key Person Risk", "Speed vs. Stability"). The identifier
+  is an internal field and must not appear in summary, key_findings,
+  sustainability_note, recommended_actions, or tradeoff_explanation.
 - Return only valid JSON. No preamble. No markdown fences.
 """
 
@@ -67,13 +96,22 @@ async def run_call3(stakeholder_role: str, report: dict, declared_kpis: list) ->
 
     try:
         data = json.loads(clean)
+        sections = data if "summary" in data else data.get("sections", data)
+        # Defensive cleanup: strip any leaked conflict_type identifiers from
+        # the human-facing text fields, regardless of whether the LLM followed
+        # the system-prompt rule.
+        for key in ("summary", "key_findings", "sustainability_note",
+                    "recommended_actions", "tradeoff_explanation"):
+            if key in sections:
+                sections[key] = _strip_conflict_codes(sections[key])
+
         profile_id = report.get("profile_id", "")
         from datetime import datetime, timezone
         generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         output = ExplanationOutput(
             profile_id=profile_id,
             stakeholder_role=stakeholder_role,
-            sections=data if "summary" in data else data.get("sections", data),
+            sections=sections,
             generated_at=generated_at,
         )
         return output.model_dump()

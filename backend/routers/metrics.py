@@ -177,7 +177,22 @@ def compute_metrics(
 
     effective_period_days = max(1, int((c_end - c_start).days))
     codes_list = [c.strip() for c in (body.metric_codes or metric_codes).split(",") if c.strip()] or None
-    results = compute_all(raw_events, c_start, c_end, p_start, p_end, codes=codes_list)
+
+    # Pull the release tag pattern from the profile's data_source_config.
+    # Falls back to "v*" if the config field is absent (older profiles).
+    release_tag_pattern = "v*"
+    try:
+        dsc = json.loads(profile.data_source_config or "{}")
+        if isinstance(dsc, dict) and dsc.get("release_tag_pattern"):
+            release_tag_pattern = dsc["release_tag_pattern"]
+    except Exception:
+        pass
+
+    results = compute_all(
+        raw_events, c_start, c_end, p_start, p_end,
+        codes=codes_list,
+        release_tag_pattern=release_tag_pattern,
+    )
 
     if not results:
         logger.warning("compute_all returned 0 metrics for profile %s", profile_id)

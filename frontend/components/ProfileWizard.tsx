@@ -16,7 +16,15 @@ import {
 // ---------------------------------------------------------------------------
 
 const TEAM_TYPES = ["platform_team", "product_team", "infrastructure_team", "security_team"];
-const STAKEHOLDER_ROLES = ["engineering_lead", "product_owner", "cto_vp_engineering", "business_stakeholder"];
+const STAKEHOLDER_ROLES = ["engineer", "engineering_lead", "product_owner", "cto_vp_engineering", "business_analyst"];
+
+const STAKEHOLDER_LABELS: Record<string, string> = {
+  engineer:             "Engineer (individual contributor)",
+  engineering_lead:     "Engineering Lead (team lead / EM)",
+  product_owner:        "Product Owner",
+  cto_vp_engineering:   "CTO / VP of Engineering",
+  business_analyst:     "Business Analyst",
+};
 const PRIMARY_GOALS = [
   "maximize_reliability", "maximize_delivery_speed", "reduce_operational_cost",
   "improve_developer_wellbeing", "improve_security_posture", "increase_feature_adoption",
@@ -31,7 +39,7 @@ const CRITICALITY_LABELS: Record<string, string> = {
 const DECISION_TYPES = ["release_readiness", "incident_response", "sprint_planning", "team_health_review", "stakeholder_reporting"];
 const TIME_HORIZONS = ["immediate", "short_term", "strategic"];
 
-const SUGGESTED_KPIS: Record<string, Array<Omit<DeclaredKPI, "value" | "business_impact">>> = {
+const SUGGESTED_KPIS: Record<string, Array<Omit<DeclaredKPI, "target_value" | "current_value" | "business_impact">>> = {
   release_readiness:     [{ name: "SLA uptime target", unit: "%", threshold_type: "minimum" }, { name: "Cost per incident", unit: "€/hr", threshold_type: "maximum" }],
   sprint_planning:       [{ name: "Sprint velocity", unit: "points", threshold_type: "target" }, { name: "Feature delivery target", unit: "%", threshold_type: "minimum" }],
   team_health_review:    [{ name: "Goal completion", unit: "%", threshold_type: "minimum" }, { name: "Team satisfaction score", unit: "1-10", threshold_type: "minimum" }],
@@ -168,6 +176,7 @@ export default function ProfileWizard() {
       gitlab_base_url: "https://gitlab.com", gitlab_project_ids: [],
       github_base_url: "https://github.com", github_repo_slugs: [],
       jira_base_url: "", jira_project_keys: [],
+      release_tag_pattern: "v*",
     },
   });
   const [manualKpis, setManualKpis] = useState<DeclaredKPI[]>([]);
@@ -277,6 +286,7 @@ export default function ProfileWizard() {
         github_repo_slugs: isGitHub ? [exploreResult.github_repo_slug ?? ""] : [],
         jira_base_url: step0JiraUrl || null,
         jira_project_keys: [],
+        release_tag_pattern: "v*",
       },
     }));
     setStep(1);
@@ -315,7 +325,7 @@ export default function ProfileWizard() {
 
   const initKpis = () => {
     const suggestions = SUGGESTED_KPIS[profile.decision_type ?? ""] ?? [];
-    setManualKpis(suggestions.map((s) => ({ ...s, value: 0, business_impact: "" })));
+    setManualKpis(suggestions.map((s) => ({ ...s, target_value: 0, current_value: null, business_impact: "" })));
   };
 
   const handleSaveAndPrioritise = async () => {
@@ -340,6 +350,7 @@ export default function ProfileWizard() {
           github_repo_slugs: fullProfile.data_source_config?.github_repo_slugs ?? [],
           jira_base_url: fullProfile.data_source_config?.jira_base_url ?? null,
           jira_project_keys: fullProfile.data_source_config?.jira_project_keys ?? [],
+          release_tag_pattern: fullProfile.data_source_config?.release_tag_pattern ?? "v*",
         },
       };
       const saved = await createProfile(sanitised);
@@ -377,6 +388,7 @@ export default function ProfileWizard() {
             gitlab_project_ids: fullProfile.data_source_config?.gitlab_project_ids ?? [],
             jira_base_url: fullProfile.data_source_config?.jira_base_url ?? null,
             jira_project_keys: fullProfile.data_source_config?.jira_project_keys ?? [],
+            release_tag_pattern: fullProfile.data_source_config?.release_tag_pattern ?? "v*",
           },
         };
         const saved = await createProfile(sanitised);
@@ -527,14 +539,14 @@ export default function ProfileWizard() {
                   label="Git project URL (GitLab or GitHub)"
                   value={step0GitlabUrl}
                   onChange={setStep0GitlabUrl}
-                  placeholder="https://github.com/owner/repo  or  https://gitlab.com/group/project"
+                  placeholder=""
                   helper="Paste the full URL of your GitLab project or GitHub repository"
                 />
                 <FormInput
                   label="Jira URL (optional)"
                   value={step0JiraUrl}
                   onChange={setStep0JiraUrl}
-                  placeholder="https://yourorg.atlassian.net"
+                  placeholder=""
                 />
                 {/* Explore window */}
                 <div>
@@ -770,7 +782,7 @@ export default function ProfileWizard() {
                 <FormInput label="Team name" value={profile.team_name ?? ""} onChange={(v) => set("team_name", v)} placeholder="e.g. Platform Engineering" />
               </div>
               <FormSelect label="Team type"            value={profile.team_type ?? ""}            options={TEAM_TYPES}             onChange={(v) => set("team_type", v)}            required />
-              <FormSelect label="Stakeholder role"     value={profile.stakeholder_role ?? ""}     options={STAKEHOLDER_ROLES}      onChange={(v) => set("stakeholder_role", v)}     required />
+              <FormSelect label="Stakeholder role"     value={profile.stakeholder_role ?? ""}     options={STAKEHOLDER_ROLES}      onChange={(v) => set("stakeholder_role", v)}     required optionLabels={STAKEHOLDER_LABELS} />
               <FormSelect label="Primary goal"         value={profile.primary_goal ?? ""}         options={PRIMARY_GOALS}          onChange={(v) => set("primary_goal", v)}         required />
               <FormSelect label="Secondary goal"       value={profile.secondary_goal ?? ""}       options={PRIMARY_GOALS}          onChange={(v) => set("secondary_goal", v || null)} />
               <FormSelect label="Business criticality" value={profile.business_criticality ?? ""} options={BUSINESS_CRITICALITIES}  onChange={(v) => set("business_criticality", v)} required optionLabels={CRITICALITY_LABELS} />
@@ -904,7 +916,7 @@ export default function ProfileWizard() {
                 label="Jira base URL"
                 value={dsc?.jira_base_url ?? ""}
                 onChange={(v) => setDsc("jira_base_url", v || null)}
-                placeholder="https://yourorg.atlassian.net"
+                placeholder=""
               />
 
               <div>
@@ -974,25 +986,31 @@ export default function ProfileWizard() {
                         placeholder="e.g. SLA uptime" className="input" />
                     </div>
                     <div>
-                      <label className="label">Value <span className="text-rose-500">*</span></label>
-                      <input type="number" value={kpi.value || ""} title="KPI value"
-                        onChange={(e) => { const k = [...manualKpis]; k[i] = { ...k[i], value: parseFloat(e.target.value) || 0 }; setManualKpis(k); }}
-                        placeholder="0" className="input" />
-                    </div>
-                    <div>
                       <label className="label">Unit</label>
                       <input type="text" value={kpi.unit} title="Unit"
                         onChange={(e) => { const k = [...manualKpis]; k[i] = { ...k[i], unit: e.target.value }; setManualKpis(k); }}
                         placeholder="e.g. %" className="input" />
                     </div>
                     <div>
+                      <label className="label">Current value <span className="text-rose-500">*</span></label>
+                      <input type="number" value={kpi.current_value ?? ""} title="Current value"
+                        onChange={(e) => { const k = [...manualKpis]; k[i] = { ...k[i], current_value: e.target.value === "" ? null : parseFloat(e.target.value) }; setManualKpis(k); }}
+                        placeholder="e.g. 84" className="input" />
+                    </div>
+                    <div>
+                      <label className="label">Target value <span className="text-rose-500">*</span></label>
+                      <input type="number" value={kpi.target_value || ""} title="Target value"
+                        onChange={(e) => { const k = [...manualKpis]; k[i] = { ...k[i], target_value: parseFloat(e.target.value) || 0 }; setManualKpis(k); }}
+                        placeholder="e.g. 90" className="input" />
+                    </div>
+                    <div className="col-span-2">
                       <label className="label">Threshold type</label>
                       <select value={kpi.threshold_type} title="Threshold type"
                         onChange={(e) => { const k = [...manualKpis]; k[i] = { ...k[i], threshold_type: e.target.value as DeclaredKPI["threshold_type"] }; setManualKpis(k); }}
                         className="input">
-                        <option value="minimum">Minimum</option>
-                        <option value="maximum">Maximum</option>
-                        <option value="target">Target</option>
+                        <option value="minimum">Minimum (current should be ≥ target)</option>
+                        <option value="maximum">Maximum (current should be ≤ target)</option>
+                        <option value="target">Target (current should ≈ target)</option>
                       </select>
                     </div>
                   </div>
@@ -1012,7 +1030,7 @@ export default function ProfileWizard() {
             </div>
 
             <button
-              onClick={() => setManualKpis([...manualKpis, { name: "", value: 0, unit: "", threshold_type: "target", business_impact: "" }])}
+              onClick={() => setManualKpis([...manualKpis, { name: "", target_value: 0, current_value: null, unit: "", threshold_type: "target", business_impact: "" }])}
               className="mt-4 text-xs font-semibold text-violet-600 hover:text-violet-700"
             >+ Add custom KPI</button>
 
@@ -1215,7 +1233,8 @@ export default function ProfileWizard() {
                 <div className="space-y-1">
                   {manualKpis.map((k, i) => (
                     <p key={i} className="text-sm text-slate-700">
-                      <span className="font-semibold">{k.name}</span>: {k.value} {k.unit}
+                      <span className="font-semibold">{k.name}</span>:{" "}
+                      {k.current_value ?? "—"} / {k.target_value} {k.unit}
                       <span className="text-slate-400 ml-1">({k.threshold_type})</span>
                     </p>
                   ))}

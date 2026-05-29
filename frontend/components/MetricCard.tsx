@@ -32,6 +32,19 @@ function fmt(v: number) {
   return v % 1 === 0 ? String(v) : v.toFixed(2);
 }
 
+// Format a threshold boundary using the metric's unit so the badge
+// reads "within · 15%" rather than "within · 15", "within · 24h" rather
+// than "within · 24", etc.
+function fmtThreshold(v: number, unit: string) {
+  const num = fmt(v);
+  const u = (unit || "").toLowerCase();
+  if (u.includes("%")) return `${num}%`;
+  if (u.startsWith("hour")) return `${num}h`;
+  if (u.startsWith("day")) return `${num}d`;
+  if (u.startsWith("min")) return `${num}m`;
+  return num;
+}
+
 export default function MetricCard({ metric }: { metric: MetricRecord }) {
   const trend      = TREND_ICON[metric.trend] ?? TREND_ICON.stable;
   const statusKey  = metric.threshold_status ?? "within";
@@ -81,7 +94,7 @@ export default function MetricCard({ metric }: { metric: MetricRecord }) {
           >
             {statusKey}
             {metric.threshold_value !== null && metric.threshold_value !== undefined
-              ? ` · ${metric.threshold_value}`
+              ? ` · ${fmtThreshold(metric.threshold_value, metric.unit)}`
               : ""}
           </span>
           {metric.threshold_source && metric.threshold_source !== "none" && (

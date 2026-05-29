@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Literal, Optional, List
 from enum import Enum
 
@@ -11,10 +11,19 @@ class TeamType(str, Enum):
 
 
 class StakeholderRole(str, Enum):
+    engineer = "engineer"
     engineering_lead = "engineering_lead"
     product_owner = "product_owner"
     cto_vp_engineering = "cto_vp_engineering"
-    business_stakeholder = "business_stakeholder"
+    business_analyst = "business_analyst"
+
+    @classmethod
+    def _missing_(cls, value):
+        # Backward compatibility for the renamed role.
+        # Older profiles stored "business_stakeholder"; it now means "business_analyst".
+        if value == "business_stakeholder":
+            return cls.business_analyst
+        return None
 
 
 class PrimaryGoal(str, Enum):
@@ -48,10 +57,20 @@ class TimeHorizon(str, Enum):
 
 class DeclaredKPI(BaseModel):
     name: str
-    value: float
+    target_value: float
+    current_value: Optional[float] = None
     unit: str
     threshold_type: str  # 'minimum' | 'maximum' | 'target'
     business_impact: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_value_field(cls, data):
+        # Backward compat: profiles created before current_value was added stored the
+        # target under "value". Promote that to target_value when target_value is absent.
+        if isinstance(data, dict) and "target_value" not in data and "value" in data:
+            data = {**data, "target_value": data["value"]}
+        return data
 
 
 class DataSourceConfig(BaseModel):
@@ -70,6 +89,11 @@ class DataSourceConfig(BaseModel):
     # Jira fields (unchanged)
     jira_base_url: Optional[str] = None   # e.g. https://yourorg.atlassian.net
     jira_project_keys: List[str] = []     # e.g. ["PROJ", "CORE"]
+
+    # Release tag pattern (glob) used to identify production deployments.
+    # Default matches common SemVer release tags (v1.2.3 etc). Teams that use
+    # alternative naming (release-*, r*, raw semver) can override.
+    release_tag_pattern: str = "v*"
 
     @property
     def git_project_ids(self) -> List[str]:

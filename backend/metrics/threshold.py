@@ -22,7 +22,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 DORA_THRESHOLDS: dict[str, dict] = {
-    "CFR":  {"within": (0, 0.15),   "warning": (0.15, 0.30), "breach": (0.30, 1.0),  "unit": "%"},
+    # CFR is computed as percent (0–100), so thresholds are on the same scale.
+    # DORA 2022 boundaries: High 0–15%, Medium 16–30%, Low 46–60% (we collapse
+    # 30–46 into the breach band).
+    "CFR":  {"within": (0, 15),     "warning": (15, 30),     "breach": (30, 100),    "unit": "%"},
     "DF":   {"within": (1, 9999),   "warning": (0.5, 1),     "breach": (0, 0.5),     "unit": "deployments/day"},
     "MTTR": {"within": (0, 24),     "warning": (24, 168),    "breach": (168, 9999),  "unit": "hours"},
     "LTfC": {"within": (0, 24),     "warning": (24, 168),    "breach": (168, 9999),  "unit": "hours"},
@@ -139,16 +142,22 @@ def check_threshold(
     # --- 1. Check declared KPIs ---
     for kpi in declared_kpis:
         # kpi may be a DeclaredKPI Pydantic model or a plain dict
-        name = kpi.get("name") if isinstance(kpi, dict) else kpi.name
-        kpi_value = kpi.get("value") if isinstance(kpi, dict) else kpi.value
-        threshold_type = kpi.get("threshold_type") if isinstance(kpi, dict) else kpi.threshold_type
+        if isinstance(kpi, dict):
+            name = kpi.get("name")
+            # Accept new `target_value` field, fall back to legacy `value` for old profiles
+            target = kpi.get("target_value", kpi.get("value"))
+            threshold_type = kpi.get("threshold_type")
+        else:
+            name = kpi.name
+            target = getattr(kpi, "target_value", None) or getattr(kpi, "value", None)
+            threshold_type = kpi.threshold_type
 
         # Match by metric code OR by name (declared KPIs may use metric codes as names)
         if name == metric_code or name.upper().replace(" ", "_") == metric_code:
-            status = _check_declared(current_value, float(kpi_value), threshold_type)
+            status = _check_declared(current_value, float(target), threshold_type)
             return {
                 "status": status,
-                "threshold_value": float(kpi_value),
+                "threshold_value": float(target),
                 "threshold_source": "declared",
             }
 

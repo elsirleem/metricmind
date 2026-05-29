@@ -1,7 +1,9 @@
 import os
 import base64
+import json
 import logging
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 import httpx
 
@@ -12,6 +14,25 @@ logger = logging.getLogger(__name__)
 
 JIRA_EMAIL = os.getenv("JIRA_EMAIL", "")
 JIRA_TOKEN = os.getenv("JIRA_TOKEN", "")
+
+
+def _normalise_base_url(raw: str) -> str:
+    """Reduce a user-pasted Jira URL to its origin (scheme + host).
+
+    Users sometimes paste a full board URL like
+    ``https://x.atlassian.net/jira/software/c/projects/BBT/boards/1338`` into
+    the Jira base URL field; that path then breaks API construction. We
+    defensively strip everything past the netloc.
+    """
+    if not raw:
+        return raw
+    try:
+        p = urlparse(raw.strip())
+        if p.scheme and p.netloc:
+            return f"{p.scheme}://{p.netloc}"
+    except Exception:
+        pass
+    return raw
 
 
 class JiraProjectNotFoundError(Exception):
@@ -85,7 +106,17 @@ async def _fetch_single_project(
     until_date: str,
 ) -> list[dict]:
     headers = _auth_header()
-    search_url = f"{base_url.rstrip('/')}/rest/api/2/search"
+    if not (JIRA_EMAIL and JIRA_TOKEN):
+        logger.warning(
+            "Jira request for project %s will be sent unauthenticated — "
+            "set JIRA_EMAIL and JIRA_TOKEN in .env for private instances",
+            project_key,
+        )
+    normalised_base = _normalise_base_url(base_url)
+    # Atlassian retired /rest/api/2/search and /rest/api/3/search (returns 410
+    # Gone). The replacement is the enhanced JQL search endpoint, which takes
+    # the same JQL payload but uses cursor pagination instead of startAt/total.
+    search_url = f"{normalised_base.rstrip('/')}/rest/api/3/search/jql"
     events: list[dict] = []
 
     # Fetch bugs and incidents
@@ -153,5 +184,25 @@ async def _jql_search(
         raise JiraProjectNotFoundError(project_key)
 
     response.raise_for_status()
-    data = response.json()
+
+    # Jira may return HTML (a login redirect) with a 200 status when the
+    # token is missing or expired. Detect that explicitly so the error
+    # surfaces as "auth issue" rather than a confusing JSON parse failure.
+    ctype = response.headers.get("content-type", "")
+    if "application/json" not in ctype:
+        snippet = response.text[:120].replace("\n", " ")
+        raise RuntimeError(
+            f"Jira returned non-JSON response (content-type={ctype!r}). "
+            f"Most likely the token is invalid or missing (private Jira instances "
+            f"redirect unauthenticated API requests to a login page). "
+            f"Check JIRA_EMAIL / JIRA_TOKEN in .env. Response snippet: {snippet!r}"
+        )
+    try:
+        data = response.json()
+    except json.JSONDecodeError as e:
+        snippet = response.text[:120].replace("\n", " ")
+        raise RuntimeError(
+            f"Jira response was advertised as JSON but did not parse "
+            f"(status={response.status_code}, error={e}). Snippet: {snippet!r}"
+        ) from e
     return data.get("issues", [])

@@ -27,6 +27,10 @@ Steps:
    business_criticality (mission_critical raises severity by one level),
    threshold_status (breach = higher), trend (degrading = higher),
    declared business_impact strings if present.
+   For each declared_kpis entry, compare current_value to target_value:
+   reference the gap explicitly in evidence (e.g. "Allocation Accuracy is 84%
+   versus a 90% target — a 6-point shortfall"). Treat declared KPIs as
+   first-class signals alongside computed metrics.
 4. RECOMMENDATIONS — for HIGH or CRITICAL conflicts only, pick ONE code from:
    reduce_deployment_pace | invest_in_test_coverage | address_technical_debt |
    review_team_capacity | escalate_to_stakeholder | accept_risk_with_mitigation |
@@ -111,6 +115,9 @@ def normalise_report(data: dict, profile_id: str) -> dict:
 
     if "threshold_assessments" in data:
         for item in data["threshold_assessments"]:
+            # LLMs commonly emit "code"; schema expects "metric_code"
+            if "metric_code" not in item and "code" in item:
+                item["metric_code"] = item.pop("code")
             # Claude uses threshold_status, schema expects status
             if "status" not in item and "threshold_status" in item:
                 item["status"] = item.pop("threshold_status")
@@ -122,16 +129,22 @@ def normalise_report(data: dict, profile_id: str) -> dict:
                 item["threshold_value"] = None
 
     if "sustainability_flags" in data:
+        # Filter out non-standard flag codes the LLM occasionally invents
+        # (e.g. "CFR_REWORK", "KPI_*") — schema requires metric_code to be
+        # a real code, and the downstream UI matches by code.
+        valid_flags = []
         for flag in data["sustainability_flags"]:
+            # LLMs commonly emit "code"; schema expects "metric_code"
+            if "metric_code" not in flag and "code" in flag:
+                flag["metric_code"] = flag.pop("code")
             # Ensure dimension field exists
-            if "dimension" not in flag:
+            if "dimension" not in flag or flag.get("dimension") not in ("individual", "technical"):
                 # Infer from metric code
                 individual_metrics = [
                     "BUR", "DSAT_MANUAL", "HAP", "DSAT",
                     "AR", "RR", "BF"
                 ]
-                code = flag.get("metric_code",
-                               flag.get("code", ""))
+                code = flag.get("metric_code", "")
                 flag["dimension"] = (
                     "individual"
                     if code in individual_metrics
@@ -145,6 +158,32 @@ def normalise_report(data: dict, profile_id: str) -> dict:
             # Ensure consecutive_periods exists
             if "consecutive_periods" not in flag:
                 flag["consecutive_periods"] = 1
+            valid_flags.append(flag)
+        data["sustainability_flags"] = valid_flags
+
+    # Normalise recommendation priorities — LLMs sometimes emit
+    # 'critical' / 'high' / 'medium' / 'low' instead of the allowed
+    # 'immediate' / 'this_sprint' / 'strategic' set. Map them.
+    if "recommendations" in data:
+        priority_map = {
+            "critical": "immediate",
+            "high": "immediate",
+            "medium": "this_sprint",
+            "low": "strategic",
+            "p1": "immediate", "p2": "this_sprint",
+            "p3": "strategic", "p4": "strategic",
+        }
+        allowed_priority = {"immediate", "this_sprint", "strategic"}
+        for r in data["recommendations"]:
+            p = (r.get("priority") or "").lower()
+            if p in priority_map:
+                r["priority"] = priority_map[p]
+            elif p not in allowed_priority:
+                r["priority"] = "this_sprint"
+            # Strip any rationale/explanation fields not in the schema —
+            # they belong in Call 3 output, not Call 2.
+            for extra in ("rationale", "explanation", "reason"):
+                r.pop(extra, None)
 
     # Remove extra fields not in schema
     allowed = {"profile_id", "snapshot_timestamp", "overall_health",

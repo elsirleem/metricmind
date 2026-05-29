@@ -7,6 +7,7 @@ from backend.ingestion.normaliser import (
     normalise_github_pipeline,
     normalise_github_mr,
     normalise_github_commit,
+    normalise_github_release,
 )
 
 logger = logging.getLogger(__name__)
@@ -113,6 +114,23 @@ class GitHubAdapter(GitAdapter):
             commits_resp.raise_for_status()
             for c in commits_resp.json():
                 events.append(normalise_github_commit(c, profile_id, project_id))
+
+            # --- Releases (= production deployment signal for tag-based teams) ---
+            releases_resp = await client.get(
+                f"{api}/releases",
+                params={"per_page": 100},
+                headers=headers,
+            )
+            if releases_resp.status_code == 200:
+                for rel in releases_resp.json():
+                    if rel.get("draft"):
+                        continue   # skip draft releases
+                    events.append(normalise_github_release(rel, profile_id, project_id))
+            else:
+                logger.info(
+                    "GitHub Releases endpoint returned %s for %s — releases not ingested",
+                    releases_resp.status_code, project_id,
+                )
 
         return events
 

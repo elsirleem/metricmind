@@ -11,12 +11,24 @@ Current period  = [c_start, c_end)
 Previous period = [p_start, p_end)
 """
 
+import fnmatch
 import json
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Default fallback tag pattern when a profile doesn't override it.
+DEFAULT_TAG_PATTERN = "v*"
+
+# Re-used regex for detecting revert PRs (used by the merged-PR CFR fallback).
+_REVERT_TITLE = re.compile(r'^\s*Revert\s+["\'`]', re.IGNORECASE)
+
+# Hotfix window: a release within this many hours of the previous release
+# is treated as a hotfix indicating the previous release shipped broken.
+HOTFIX_WINDOW_HOURS = 24
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +98,87 @@ def _merged_mrs_in(mrs: list[dict], start: datetime, end: datetime) -> list[dict
 
 
 # ---------------------------------------------------------------------------
+# Release / deployment helpers
+# ---------------------------------------------------------------------------
+
+def _releases(events: list[dict]) -> list[dict]:
+    return [e for e in events if e["entity_type"] == "release"]
+
+
+def _matches_pattern(tag: str | None, pattern: str) -> bool:
+    if not tag:
+        return False
+    return fnmatch.fnmatchcase(tag, pattern)
+
+
+def _releases_in_period(
+    events: list[dict], start: datetime, end: datetime, pattern: str,
+) -> list[dict]:
+    out = []
+    for r in _releases(events):
+        if not _in_period(r["timestamp"], start, end):
+            continue
+        tag = r["attributes"].get("tag_name") or r["entity_id"]
+        if _matches_pattern(tag, pattern):
+            out.append(r)
+    return out
+
+
+def _is_hotfix_of(prev_tag: str | None, current_tag: str | None) -> bool:
+    """A release is a hotfix of the previous one when they share the same
+    major.minor prefix but the current bumps only the patch component.
+    e.g. v0.18.0 → v0.18.1 (hotfix); v0.18.5 → v0.19.0 (not a hotfix).
+    """
+    if not prev_tag or not current_tag:
+        return False
+    semver = re.compile(r"v?(\d+)\.(\d+)\.(\d+)")
+    a, b = semver.search(prev_tag), semver.search(current_tag)
+    if not a or not b:
+        return False
+    return a.group(1) == b.group(1) and a.group(2) == b.group(2) and a.group(3) != b.group(3)
+
+
+def _count_hotfix_releases(releases: list[dict]) -> int:
+    """Count releases that are hotfixes of the immediately preceding release
+    AND were published within HOTFIX_WINDOW_HOURS of it."""
+    if len(releases) < 2:
+        return 0
+    sorted_rel = sorted(releases, key=lambda r: r["timestamp"])
+    hotfixes = 0
+    for prev, curr in zip(sorted_rel, sorted_rel[1:]):
+        prev_tag = prev["attributes"].get("tag_name") or prev["entity_id"]
+        curr_tag = curr["attributes"].get("tag_name") or curr["entity_id"]
+        if not _is_hotfix_of(prev_tag, curr_tag):
+            continue
+        prev_dt, curr_dt = _parse_dt(prev["timestamp"]), _parse_dt(curr["timestamp"])
+        if not prev_dt or not curr_dt:
+            continue
+        if (curr_dt - prev_dt) <= timedelta(hours=HOTFIX_WINDOW_HOURS):
+            hotfixes += 1
+    return hotfixes
+
+
+def _has_any_releases(events: list[dict], pattern: str) -> bool:
+    """True if at least one matching release exists in the entire event set
+    (ignoring period). Used to decide whether to use the release-based or
+    merged-PR fallback signal."""
+    for r in _releases(events):
+        tag = r["attributes"].get("tag_name") or r["entity_id"]
+        if _matches_pattern(tag, pattern):
+            return True
+    return False
+
+
+def _merged_to_main_in_period(mrs: list[dict], start: datetime, end: datetime) -> list[dict]:
+    merged = _merged_mrs_in(mrs, start, end)
+    return [m for m in merged if m["attributes"].get("target_branch") in ("main", "master")]
+
+
+def _is_revert_title(title: str | None) -> bool:
+    return bool(title and _REVERT_TITLE.match(title))
+
+
+# ---------------------------------------------------------------------------
 # Individual metric functions
 # ---------------------------------------------------------------------------
 
@@ -93,17 +186,44 @@ def compute_cfr(
     events: list[dict],
     c_start: datetime, c_end: datetime,
     p_start: datetime, p_end: datetime,
+    release_tag_pattern: str = DEFAULT_TAG_PATTERN,
 ) -> dict:
-    """Change Failure Rate = failed pipelines / total pipelines * 100  (%)"""
-    def _cfr(pipes: list[dict]) -> float:
-        if not pipes:
+    """Change Failure Rate (%).
+
+    Primary signal: hotfix release detection.
+      CFR = (releases that are patch-level bumps of the prior release within
+             HOTFIX_WINDOW_HOURS) / (total releases in the period) * 100
+
+    Fallback (no releases ever found in this repo): count revert PRs.
+      CFR = (merged PRs to main with title starting with "Revert ...")
+            / (total merged PRs to main in the period) * 100
+    """
+    if _has_any_releases(events, release_tag_pattern):
+        def _cfr_releases(rels: list[dict]) -> float:
+            if not rels:
+                return 0.0
+            hotfixes = _count_hotfix_releases(rels)
+            return (hotfixes / len(rels)) * 100
+
+        return {
+            "current": _cfr_releases(_releases_in_period(events, c_start, c_end, release_tag_pattern)),
+            "previous": _cfr_releases(_releases_in_period(events, p_start, p_end, release_tag_pattern)),
+            "unit": "%",
+        }
+
+    # Fallback: revert PR detection on merged PRs to main
+    mrs = _mrs(events)
+
+    def _cfr_merges(period_start: datetime, period_end: datetime) -> float:
+        merged = _merged_to_main_in_period(mrs, period_start, period_end)
+        if not merged:
             return 0.0
-        failed = sum(1 for p in pipes if p["attributes"].get("status") == "failed")
-        return (failed / len(pipes)) * 100
+        reverts = sum(1 for m in merged if _is_revert_title(m["attributes"].get("title")))
+        return (reverts / len(merged)) * 100
 
     return {
-        "current": _cfr(_pipelines(events, c_start, c_end)),
-        "previous": _cfr(_pipelines(events, p_start, p_end)),
+        "current": _cfr_merges(c_start, c_end),
+        "previous": _cfr_merges(p_start, p_end),
         "unit": "%",
     }
 
@@ -112,18 +232,27 @@ def compute_df(
     events: list[dict],
     c_start: datetime, c_end: datetime,
     p_start: datetime, p_end: datetime,
+    release_tag_pattern: str = DEFAULT_TAG_PATTERN,
 ) -> dict:
-    """Deployment Frequency = count of successful deployments to main/master/trunk/develop."""
-    def _df(pipes: list[dict]) -> float:
-        return float(sum(
-            1 for p in pipes
-            if p["attributes"].get("status") == "success"
-            and p["attributes"].get("ref") in ("main", "master", "trunk", "develop")
-        ))
+    """Deployment Frequency.
 
+    Primary signal: count of releases (tags matching release_tag_pattern) in
+    the period — each release = one production-bound deployment.
+
+    Fallback (no releases ever found in this repo): count of PRs merged into
+    main/master in the period — for teams using continuous deployment from main.
+    """
+    if _has_any_releases(events, release_tag_pattern):
+        return {
+            "current": float(len(_releases_in_period(events, c_start, c_end, release_tag_pattern))),
+            "previous": float(len(_releases_in_period(events, p_start, p_end, release_tag_pattern))),
+            "unit": "deployments",
+        }
+
+    mrs = _mrs(events)
     return {
-        "current": _df(_pipelines(events, c_start, c_end)),
-        "previous": _df(_pipelines(events, p_start, p_end)),
+        "current": float(len(_merged_to_main_in_period(mrs, c_start, c_end))),
+        "previous": float(len(_merged_to_main_in_period(mrs, p_start, p_end))),
         "unit": "deployments",
     }
 
@@ -162,17 +291,59 @@ def compute_ltfc(
     events: list[dict],
     c_start: datetime, c_end: datetime,
     p_start: datetime, p_end: datetime,
+    release_tag_pattern: str = DEFAULT_TAG_PATTERN,
 ) -> dict:
-    """Lead Time for Changes = avg hours from MR created_at to merged_at.
-    Returns None when no merged MRs exist in the period.
+    """Lead Time for Changes — DORA's definition: the time it takes a commit
+    to get into production. One of the four DORA key metrics.
+
+    With the data we ingest (PRs/MRs and release tags) the closest faithful
+    implementation is: for each PR merged in the period, take the gap
+    between PR open time (proxy for "code committed") and the first release
+    tag at or after merge time (proxy for "code running in production").
+    The mean of those gaps is the period's LTfC.
+
+    If the repo has no release tags matching the configured pattern, we
+    cannot measure when changes reach production — so we return None
+    rather than falling back to a PR-merge-time formula. Returning None
+    causes the metric to be omitted from the snapshot (the report UI hides
+    or annotates it accordingly), which is more honest than reporting a
+    PRCT-equivalent number under the LTfC label.
+
+    Also returns None when no merged MRs exist in the period.
     """
+    if not _has_any_releases(events, release_tag_pattern):
+        return {"current": None, "previous": None, "unit": "hours"}
+
+    # Pre-collect release timestamps (ascending) once.
+    release_dts: list[datetime] = []
+    for r in _releases(events):
+        tag = r["attributes"].get("tag_name") or r["entity_id"]
+        if not _matches_pattern(tag, release_tag_pattern):
+            continue
+        dt = _parse_dt(r["timestamp"])
+        if dt:
+            release_dts.append(dt)
+    release_dts.sort()
+
+    def _next_release_after(merged_dt: datetime) -> datetime | None:
+        # Linear scan is fine — release counts are small.
+        for r_dt in release_dts:
+            if r_dt >= merged_dt:
+                return r_dt
+        return None
+
     def _ltfc(start: datetime, end: datetime) -> float | None:
         deltas = []
         for m in _merged_mrs_in(_mrs(events), start, end):
             created_dt = _parse_dt(m["timestamp"])
             merged_dt = _parse_dt(m["attributes"]["merged_at"])
-            if created_dt and merged_dt:
-                deltas.append((merged_dt - created_dt).total_seconds() / 3600)
+            if not (created_dt and merged_dt):
+                continue
+            shipped_dt = _next_release_after(merged_dt)
+            if shipped_dt is None:
+                # PR merged but no release has shipped it yet — skip.
+                continue
+            deltas.append((shipped_dt - created_dt).total_seconds() / 3600)
         return _mean_or_none(deltas)
 
     return {
@@ -538,19 +709,26 @@ def compute_all(
     p_start: datetime,
     p_end: datetime,
     codes: list[str] = None,
+    release_tag_pattern: str = DEFAULT_TAG_PATTERN,
 ) -> list[dict]:
     """Run metric functions for the given date ranges and return results.
 
     Each result dict: {metric_code, current_value, previous_value, unit}
     If codes is provided, only those metrics are computed.
+    release_tag_pattern is forwarded to DF/CFR (which use it to detect releases).
     """
     events = parse_events(raw_events)
     results = []
+    # Metrics that accept the optional release_tag_pattern kwarg.
+    tag_aware = {"CFR", "DF", "LTfC"}
     for code, fn in METRIC_FUNCTIONS.items():
         if codes and code not in codes:
             continue
         try:
-            out = fn(events, c_start, c_end, p_start, p_end)
+            if code in tag_aware:
+                out = fn(events, c_start, c_end, p_start, p_end, release_tag_pattern=release_tag_pattern)
+            else:
+                out = fn(events, c_start, c_end, p_start, p_end)
             results.append({
                 "metric_code": code,
                 "current_value": out["current"],

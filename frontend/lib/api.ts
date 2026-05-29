@@ -9,7 +9,8 @@ const api = axios.create({ baseURL: API_URL });
 
 export interface DeclaredKPI {
   name: string;
-  value: number;
+  target_value: number;
+  current_value: number | null;
   unit: string;
   threshold_type: "minimum" | "maximum" | "target";
   business_impact: string;
@@ -23,6 +24,7 @@ export interface DataSourceConfig {
   github_repo_slugs?: string[];
   jira_base_url: string | null;
   jira_project_keys: string[];
+  release_tag_pattern?: string;
 }
 
 export interface ProfileCreate {
@@ -206,6 +208,9 @@ export const computeMetrics = (profileId: string, timeWindow?: TimeWindow, perio
 export const getMetrics = (profileId: string) =>
   api.get<MetricRecord[]>(`/api/metrics/${profileId}`).then((r) => r.data);
 
+export const recomputeMetrics = (profileId: string, periodDays = 30) =>
+  api.post(`/api/metrics/compute/${profileId}?period_days=${periodDays}`, {}).then((r) => r.data);
+
 export const saveManualMetrics = (profileId: string, metrics: ManualMetricInput[]) =>
   api.post<{ status: string; saved: number }>(`/api/metrics/manual/${profileId}`, metrics).then((r) => r.data);
 
@@ -220,6 +225,9 @@ export const runExplanation = (profileId: string) =>
 
 export const getLatestExplanation = (profileId: string) =>
   api.get<ExplanationOutput>(`/api/intelligence/${profileId}/latest`).then((r) => r.data);
+
+export const getLatestReport = (profileId: string) =>
+  api.get<ReasoningReport>(`/api/intelligence/${profileId}/latest-report`).then((r) => r.data);
 
 export const seedDatabase = () =>
   api.post<{ status: string; profile_id: string }>("/api/seed").then((r) => r.data);

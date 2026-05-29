@@ -15,7 +15,7 @@ import {
   ReferenceLine,
   Legend,
 } from "recharts";
-import { getMetrics, MetricRecord } from "@/lib/api";
+import { getMetrics, recomputeMetrics, MetricRecord } from "@/lib/api";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -108,6 +108,22 @@ function TrendsContent() {
   const [loading, setLoading]           = useState(true);
   const [error, setError]               = useState("");
   const [periodBoundary, setPeriodBoundary] = useState<string | null>(null);
+  const [refreshing, setRefreshing]     = useState(false);
+
+  const handleRefresh = async () => {
+    if (!profileId || refreshing) return;
+    setRefreshing(true); setError("");
+    try {
+      await recomputeMetrics(profileId);
+      const fresh = await getMetrics(profileId);
+      setMetrics(fresh);
+    } catch (e) {
+      setError("Refresh failed — see console.");
+      console.error(e);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   useEffect(() => {
     try {
@@ -167,6 +183,16 @@ function TrendsContent() {
           <div className="flex items-center gap-4">
             {profileId && (
               <>
+                <button
+                  type="button"
+                  onClick={handleRefresh}
+                  disabled={refreshing}
+                  className="text-sm font-medium px-3 py-1.5 rounded-lg border border-white/20 hover:bg-white/10 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                  style={{ color: "#FFFFFF" }}
+                  title="Re-run metric computation on the latest ingested data"
+                >
+                  {refreshing ? "Refreshing…" : "Refresh metrics"}
+                </button>
                 <Link href={`/dashboard?profile_id=${profileId}`} className="text-sm font-medium" style={{ color: "#FFFFFF" }}>Dashboard</Link>
                 <Link href={`/intelligence?profile_id=${profileId}`} className="text-sm font-medium" style={{ color: "#FFFFFF" }}>Intelligence</Link>
               </>
@@ -190,9 +216,9 @@ function TrendsContent() {
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-5">
             {loading ? [1,2,3].map((i) => <div key={i} className="h-[88px] bg-slate-100 rounded-xl animate-pulse" />) : (
               <>
-                <SummaryTile label="CFR"  value={fmtVal(getMetricVal("CFR")?.current_value)}   unit="% change failure rate"  status={getMetricVal("CFR")?.threshold_status} />
-                <SummaryTile label="DF"   value={fmtVal(getMetricVal("DF")?.current_value, 0)}  unit="deployments"             status={getMetricVal("DF")?.threshold_status} />
-                <SummaryTile label="CQI"  value={fmtVal(getMetricVal("CQI")?.current_value)}   unit="% code quality index"    status={getMetricVal("CQI")?.threshold_status} />
+                {getMetricVal("CFR") && <SummaryTile label="CFR"  value={fmtVal(getMetricVal("CFR")?.current_value)}   unit="% change failure rate"  status={getMetricVal("CFR")?.threshold_status} />}
+                {getMetricVal("DF")  && <SummaryTile label="DF"   value={fmtVal(getMetricVal("DF")?.current_value, 0)}  unit="deployments"             status={getMetricVal("DF")?.threshold_status} />}
+                {getMetricVal("CQI") && <SummaryTile label="CQI"  value={fmtVal(getMetricVal("CQI")?.current_value)}   unit="% code quality index"    status={getMetricVal("CQI")?.threshold_status} />}
               </>
             )}
           </div>
@@ -231,9 +257,10 @@ function TrendsContent() {
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-5">
             {loading ? [1,2,3].map((i) => <div key={i} className="h-[88px] bg-slate-100 rounded-xl animate-pulse" />) : (
               <>
+                {/* MTTR always rendered — "no incidents recorded" is informative context, not a missing-data error */}
                 <SummaryTile label="MTTR" value={fmtMttr(getMetricVal("MTTR")?.current_value)} unit={getMetricVal("MTTR")?.current_value ? "hours mean time to recover" : "no incidents recorded"} status={getMetricVal("MTTR") ? getMetricVal("MTTR")?.threshold_status : undefined} />
-                <SummaryTile label="PRCT" value={fmtVal(getMetricVal("PRCT")?.current_value, 0)} unit="hours PR cycle time"  status={getMetricVal("PRCT")?.threshold_status} />
-                <SummaryTile label="PR"   value={fmtVal(getMetricVal("PR")?.current_value, 0)}   unit="pull requests"       status={getMetricVal("PR")?.threshold_status} />
+                {getMetricVal("PRCT") && <SummaryTile label="PRCT" value={fmtVal(getMetricVal("PRCT")?.current_value, 0)} unit="hours PR cycle time"  status={getMetricVal("PRCT")?.threshold_status} />}
+                {getMetricVal("PR")   && <SummaryTile label="PR"   value={fmtVal(getMetricVal("PR")?.current_value, 0)}   unit="pull requests"       status={getMetricVal("PR")?.threshold_status} />}
               </>
             )}
           </div>
@@ -272,10 +299,10 @@ function TrendsContent() {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
             {loading ? [1,2,3,4].map((i) => <div key={i} className="h-[88px] bg-slate-100 rounded-xl animate-pulse" />) : (
               <>
-                <SummaryTile label="AHCR" value={fmtVal(getMetricVal("AHCR")?.current_value)}    unit="% commits after hours"    status={getMetricVal("AHCR")?.threshold_status} />
-                <SummaryTile label="BUR"  value={fmtVal(getMetricVal("BUR")?.current_value)}     unit="% team at risk (>3 AH)"   status={getMetricVal("BUR")?.threshold_status} />
-                <SummaryTile label="MIC"  value={fmtVal(getMetricVal("MIC")?.current_value, 0)}  unit="open stale bugs"          status={getMetricVal("MIC")?.threshold_status} />
-                <SummaryTile label="BF"   value={fmtVal(getMetricVal("BF")?.current_value)}      unit="% bus factor"             status={getMetricVal("BF")?.threshold_status} />
+                {getMetricVal("AHCR") && <SummaryTile label="AHCR" value={fmtVal(getMetricVal("AHCR")?.current_value)}    unit="% commits after hours"    status={getMetricVal("AHCR")?.threshold_status} />}
+                {getMetricVal("BUR")  && <SummaryTile label="BUR"  value={fmtVal(getMetricVal("BUR")?.current_value)}     unit="% team at risk (>3 AH)"   status={getMetricVal("BUR")?.threshold_status} />}
+                {getMetricVal("MIC")  && <SummaryTile label="MIC"  value={fmtVal(getMetricVal("MIC")?.current_value, 0)}  unit="open stale bugs"          status={getMetricVal("MIC")?.threshold_status} />}
+                {getMetricVal("BF")   && <SummaryTile label="BF"   value={fmtVal(getMetricVal("BF")?.current_value)}      unit="% bus factor"             status={getMetricVal("BF")?.threshold_status} />}
               </>
             )}
           </div>

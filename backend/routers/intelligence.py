@@ -2,8 +2,10 @@ import base64
 import json
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from urllib.parse import urlparse, parse_qs
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -24,6 +26,49 @@ router = APIRouter(prefix="/api/intelligence", tags=["intelligence"])
 
 JIRA_EMAIL = os.getenv("JIRA_EMAIL", "")
 JIRA_TOKEN = os.getenv("JIRA_TOKEN", "")
+
+
+def parse_jira_url(url: str) -> tuple[str | None, str | None]:
+    """Extract (base_url, project_key) from a user-pasted Jira URL.
+
+    Supports common Atlassian URL shapes:
+      - https://x.atlassian.net/jira/software/c/projects/KEY/...
+      - https://x.atlassian.net/jira/software/projects/KEY/...
+      - https://x.atlassian.net/projects/KEY/board
+      - https://x.atlassian.net/browse/KEY-1234
+      - https://x.atlassian.net/secure/RapidBoard.jspa?projectKey=KEY
+
+    Returns (None, None) when the input is not a usable Jira URL.
+    """
+    if not url:
+        return None, None
+    try:
+        parsed = urlparse(url.strip())
+    except Exception:
+        return None, None
+    if not parsed.scheme or not parsed.netloc:
+        return None, None
+
+    base = f"{parsed.scheme}://{parsed.netloc}"
+
+    # 1. /projects/{KEY}/...
+    m = re.search(r"/projects/([A-Z][A-Z0-9_]+)(?:/|$)", parsed.path)
+    if m:
+        return base, m.group(1)
+
+    # 2. /browse/{KEY}-1234
+    m = re.search(r"/browse/([A-Z][A-Z0-9_]+)-\d+", parsed.path)
+    if m:
+        return base, m.group(1)
+
+    # 3. ?projectKey=KEY  (RapidBoard, legacy)
+    qs = parse_qs(parsed.query)
+    pk = qs.get("projectKey") or qs.get("project")
+    if pk and pk[0]:
+        return base, pk[0]
+
+    # No project key found — return base only so the caller can warn the user.
+    return base, None
 
 
 class ExploreRequest(BaseModel):
@@ -103,9 +148,34 @@ async def explore_project(body: ExploreRequest):
     commit_messages = git_data["commit_messages"]
     mr_summaries = git_data["mr_summaries"]
 
+    # Parse the user-pasted Jira URL into (base, project_key).
+    # The frontend sends the whole URL as jira_base_url; we extract the project
+    # key from it here so the user doesn't need to know about Jira API shapes.
+    jira_base, jira_key = parse_jira_url(body.jira_base_url or "")
+    if jira_base and not jira_key:
+        # User supplied a Jira URL but we couldn't pull a project key from it.
+        # Surface this so the LLM doesn't silently flag "no Jira" as a concern
+        # when the real problem is a URL the parser didn't recognise.
+        logger.warning(
+            "Jira URL provided but project key could not be extracted: %s. "
+            "Expected /projects/KEY/, /browse/KEY-123, or ?projectKey=KEY.",
+            body.jira_base_url,
+        )
+    # Fall back to body.jira_project_key when the URL didn't carry one
+    # (e.g. user pastes just the Atlassian host and supplies the key separately).
+    if not jira_key:
+        jira_key = body.jira_project_key
+
     # Fetch Jira tickets (optional — failure is non-fatal)
     issue_summaries: list[str] = []
-    if body.jira_base_url and body.jira_project_key:
+    if jira_base and jira_key:
+        if not (JIRA_EMAIL and JIRA_TOKEN):
+            logger.warning(
+                "Jira URL provided (%s, project=%s) but JIRA_EMAIL / JIRA_TOKEN "
+                "are not configured — request will be sent unauthenticated and "
+                "will likely fail for private instances.",
+                jira_base, jira_key,
+            )
         try:
             # Auth is optional — public Jira instances (e.g. Apache) work without credentials
             jira_headers: dict = {"Content-Type": "application/json"}
@@ -114,11 +184,14 @@ async def explore_project(body: ExploreRequest):
                 jira_headers["Authorization"] = f"Basic {jira_auth}"
 
             async with httpx.AsyncClient(timeout=30) as client:
+                # Atlassian retired /rest/api/2/search and /rest/api/3/search
+                # (returns 410 Gone). The replacement is the enhanced JQL
+                # search endpoint, accepting the same JQL payload.
                 jira_resp = await client.post(
-                    f"{body.jira_base_url.rstrip('/')}/rest/api/2/search",
+                    f"{jira_base.rstrip('/')}/rest/api/3/search/jql",
                     headers=jira_headers,
                     json={
-                        "jql": f"project={body.jira_project_key} ORDER BY created DESC",
+                        "jql": f"project={jira_key} ORDER BY created DESC",
                         "maxResults": 20,
                         "fields": ["summary"],
                     },
@@ -126,6 +199,10 @@ async def explore_project(body: ExploreRequest):
                 jira_resp.raise_for_status()
                 issues = jira_resp.json().get("issues", [])
                 issue_summaries = [i["fields"]["summary"] for i in issues]
+                logger.info(
+                    "Jira: fetched %d issues from %s (project=%s) for Call 0",
+                    len(issue_summaries), jira_base, jira_key,
+                )
         except Exception as e:
             logger.warning("Jira fetch failed (non-fatal): %s", e)
 
@@ -287,3 +364,24 @@ def get_latest_explanation(profile_id: str, db: Session = Depends(get_db)):
             detail={"error": "No explanation found — run /explain first"},
         )
     return json.loads(row.explanation_json)
+
+
+@router.get("/{profile_id}/latest-report")
+def get_latest_reasoning_report(profile_id: str, db: Session = Depends(get_db)):
+    """Fetch the latest saved reasoning report for a profile.
+
+    Used by the Intelligence page on mount so that the conflicts panel and
+    other report-derived UI elements survive a profile close / re-open.
+    """
+    row = (
+        db.query(ReasoningReport)
+        .filter(ReasoningReport.profile_id == profile_id)
+        .order_by(ReasoningReport.created_at.desc())
+        .first()
+    )
+    if not row:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "No reasoning report found — run /reason first"},
+        )
+    return json.loads(row.report_json)

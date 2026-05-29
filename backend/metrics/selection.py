@@ -35,7 +35,7 @@ SELECTION_MATRIX: dict[tuple[str, str, str], dict[str, list[str]]] = {
 
     # UC2 — Sprint planning, delivery speed focus
     ("maximize_delivery_speed", "sprint_planning", "business_important"): {
-        "devops":         ["LTfC", "PRCT", "PRSi", "TWiP", "DF"],
+        "devops":         ["LTfC", "PRCT", "PRSi", "TWiP", "DF", "CFR", "PR"],
         "business":       ["VEL_MANUAL", "WIV_MANUAL"],
         "sustainability": ["BUR", "AHCR", "MIC"],
     },
