@@ -1,5 +1,7 @@
 # MetricMind
 
+![MetricMind](Metricmind_Main.png)
+
 MetricMind is an AI-powered engineering intelligence platform that analyses software repositories and generates contextual insights about team health, delivery performance, and sustainability. It combines DORA metrics with LLM-driven reasoning to produce stakeholder-tailored reports.
 
 ## Features
