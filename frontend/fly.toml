@@ -10,7 +10,7 @@
 # to match its Fly hostname (https://<backend-app-name>.fly.dev).
 
 app = "metricmind-frontend"
-primary_region = "iad"
+primary_region = "ams"
 
 [build]
   dockerfile = "Dockerfile"

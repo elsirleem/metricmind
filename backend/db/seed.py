@@ -5,11 +5,18 @@ thesis evaluation and demos without live API credentials.
 """
 
 import json
-from datetime import datetime, timezone
+import random
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
-from backend.db.models import ComputedMetric, ManualMetric, Profile
+from backend.db.models import ComputedMetric, ManualMetric, Profile, RawEvent
+
+# Rolling window of synthetic commit/pipeline/MR events, ending "today" —
+# feeds /api/metrics/{id}/event-series (the Trends page charts), which reads
+# directly from raw_events and has no other source for the seed profile.
+EVENT_WINDOW_DAYS = 84
+SEED_PROJECT_ID = "seed-project"
 
 # ---------------------------------------------------------------------------
 # Seed data (Section 15)
@@ -102,6 +109,64 @@ SEED_MANUAL_METRICS = [
 # Seed function
 # ---------------------------------------------------------------------------
 
+def _seed_raw_events(db: Session, now_iso: str) -> None:
+    """Synthetic commit/pipeline/MR events over a rolling window ending today.
+    Deterministic (fixed seed) so re-seeding produces a stable-looking chart.
+    """
+    rng = random.Random(42)
+    now = datetime.now(timezone.utc)
+
+    for days_ago in range(EVENT_WINDOW_DAYS, -1, -1):
+        day = now - timedelta(days=days_ago)
+        if day.weekday() >= 5:
+            continue  # quiet weekends, matches a typical team's rhythm
+
+        for i in range(rng.randint(2, 6)):
+            ts = day.replace(hour=rng.randint(9, 18), minute=rng.randint(0, 59))
+            db.add(RawEvent(
+                profile_id=SEED_PROFILE["id"], source="gitlab", entity_type="commit",
+                entity_id=f"seed-commit-{days_ago}-{i}", project_id=SEED_PROJECT_ID,
+                timestamp=ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                attributes=json.dumps({
+                    "author_email": "dev@example.com",
+                    "author_name": "Seed Dev",
+                    "after_hours": False,
+                }),
+                ingested_at=now_iso,
+            ))
+
+        for i in range(rng.randint(1, 3)):
+            ts = day.replace(hour=rng.randint(9, 18), minute=rng.randint(0, 59))
+            status = "success" if rng.random() > 0.2 else "failed"
+            db.add(RawEvent(
+                profile_id=SEED_PROFILE["id"], source="gitlab", entity_type="pipeline",
+                entity_id=f"seed-pipeline-{days_ago}-{i}", project_id=SEED_PROJECT_ID,
+                timestamp=ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                attributes=json.dumps({"status": status, "ref": "main", "sha": f"sha{days_ago}{i}"}),
+                ingested_at=now_iso,
+            ))
+
+        if day.weekday() == 0 and rng.random() > 0.3:
+            merged_day = day + timedelta(days=rng.randint(1, 3))
+            is_merged = merged_day <= now
+            db.add(RawEvent(
+                profile_id=SEED_PROFILE["id"], source="gitlab", entity_type="mr",
+                entity_id=f"seed-mr-{days_ago}", project_id=SEED_PROJECT_ID,
+                timestamp=day.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                attributes=json.dumps({
+                    "merged_at": merged_day.strftime("%Y-%m-%dT%H:%M:%SZ") if is_merged else None,
+                    "closed_at": None,
+                    "state": "merged" if is_merged else "open",
+                    "title": f"Seed MR {days_ago}",
+                    "changes_count": rng.randint(20, 400),
+                    "source_branch": f"feature/seed-{days_ago}",
+                    "target_branch": "main",
+                    "author_id": 1,
+                }),
+                ingested_at=now_iso,
+            ))
+
+
 def seed_database(db: Session) -> None:
     """Insert (or replace) seed profile and metrics into the database."""
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -131,10 +196,13 @@ def seed_database(db: Session) -> None:
     )
     db.add(profile)
 
-    # Delete existing metrics for seed profile
+    # Delete existing metrics/events for seed profile
     db.query(ComputedMetric).filter(ComputedMetric.profile_id == SEED_PROFILE["id"]).delete()
     db.query(ManualMetric).filter(ManualMetric.profile_id == SEED_PROFILE["id"]).delete()
+    db.query(RawEvent).filter(RawEvent.profile_id == SEED_PROFILE["id"]).delete()
     db.flush()
+
+    _seed_raw_events(db, now)
 
     # Insert computed metrics
     for m in SEED_METRICS:

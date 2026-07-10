@@ -137,8 +137,8 @@ def build_snapshot(profile_id: str, period_days: int, db: Session) -> MetricSnap
             unit = row.unit
 
         trend = _compute_trend(current_value, previous_value, meta["higher_is_better"])
-        period_days = row.period_days if not is_manual else None
-        threshold = check_threshold(code, current_value, declared_kpis, period_days=period_days)
+        row_period_days = row.period_days if not is_manual else None
+        threshold = check_threshold(code, current_value, declared_kpis, period_days=row_period_days)
 
         metrics.append(MetricRecord(
             code=code,
