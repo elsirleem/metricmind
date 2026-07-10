@@ -126,9 +126,16 @@ def check_threshold(
     metric_code: str,
     current_value: float,
     declared_kpis: Optional[list] = None,
+    period_days: Optional[int] = None,
 ) -> dict:
     """
     Return threshold assessment for a single metric.
+
+    period_days: the reporting window length backing current_value. Required
+    to classify DF correctly — DF is reported as a raw release count over
+    the period, but its DORA benchmark is defined as a rate (deployments/day).
+    Without it, DF falls back to comparing the raw count against the rate
+    thresholds, which over-credits any repo with at least one release.
 
     Returns:
         {
@@ -163,11 +170,20 @@ def check_threshold(
 
     # --- 2. DORA benchmark ---
     if metric_code in DORA_THRESHOLDS:
-        status = _check_range(current_value, DORA_THRESHOLDS[metric_code])
-        lo, _ = DORA_THRESHOLDS[metric_code]["within"]
-        hi_within, _ = _, DORA_THRESHOLDS[metric_code]["warning"][0]
+        thresholds = DORA_THRESHOLDS[metric_code]
         # Use the boundary between 'within' and 'warning' as the displayed threshold value
-        threshold_value = DORA_THRESHOLDS[metric_code]["warning"][0]
+        threshold_value = thresholds["warning"][0]
+
+        if metric_code == "DF" and period_days:
+            # DF's benchmark is a rate (deployments/day) but current_value is
+            # a raw release count over the period — convert to a rate for
+            # classification, then scale the boundary back to a period count
+            # so threshold_value stays comparable to current_value.
+            status = _check_range(current_value / period_days, thresholds)
+            threshold_value = threshold_value * period_days
+        else:
+            status = _check_range(current_value, thresholds)
+
         return {
             "status": status,
             "threshold_value": threshold_value,

@@ -1,0 +1,29 @@
+# Fly.io config for the MetricMind frontend (Next.js).
+# Deploy from the frontend/ directory: fly deploy --config fly.toml
+#
+# NEXT_PUBLIC_API_URL is baked into the client bundle at build time, so it
+# must point at the backend's real Fly URL (not localhost) before building.
+# One-time setup before first deploy:
+#   fly apps create metricmind-frontend
+#
+# If you renamed the backend app in ../fly.toml, update the build arg below
+# to match its Fly hostname (https://<backend-app-name>.fly.dev).
+
+app = "metricmind-frontend"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+  [build.args]
+    NEXT_PUBLIC_API_URL = "https://metricmind-backend.fly.dev"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

@@ -1,0 +1,41 @@
+# Fly.io config for the MetricMind backend (FastAPI).
+# Deploy from the repo root: fly deploy --config fly.toml
+#
+# One-time setup before first deploy:
+#   fly apps create metricmind-backend
+#   fly volumes create metricmind_data --app metricmind-backend --region iad --size 1
+#   fly secrets set --app metricmind-backend \
+#     LLM_PROVIDER=anthropic ANTHROPIC_API_KEY=... \
+#     GITHUB_TOKEN=... GITLAB_TOKEN=... GITLAB_URL=https://gitlab.com \
+#     FRONTEND_URL=https://metricmind-frontend.fly.dev
+#
+# Only set the API key for the provider you choose via LLM_PROVIDER:
+#   anthropic -> ANTHROPIC_API_KEY | gemini -> GEMINI_API_KEY | openai -> OPENAI_API_KEY
+# (note: code reads GEMINI_API_KEY, not GOOGLE_API_KEY as shown in README.md)
+#
+# App name must be globally unique on Fly — rename here and in frontend/fly.toml
+# (NEXT_PUBLIC_API_URL build arg) if "metricmind-backend" is taken.
+
+app = "metricmind-backend"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile.backend"
+
+[env]
+  DATABASE_URL = "sqlite:////app/data/metricmind.db"
+
+[mounts]
+  source = "metricmind_data"
+  destination = "/app/data"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

@@ -45,7 +45,7 @@ MetricMind is an AI-powered engineering intelligence platform that analyses soft
    LLM_PROVIDER=anthropic
    ANTHROPIC_API_KEY=your_anthropic_key
 
-   # GOOGLE_API_KEY=your_gemini_key
+   # GEMINI_API_KEY=your_gemini_key
    # OPENAI_API_KEY=your_openai_key
 
    # Git providers
@@ -93,7 +93,7 @@ MetricMind is an AI-powered engineering intelligence platform that analyses soft
 |---|---|
 | `LLM_PROVIDER` | `anthropic`, `gemini`, or `openai` |
 | `ANTHROPIC_API_KEY` | Anthropic API key |
-| `GOOGLE_API_KEY` | Google Gemini API key |
+| `GEMINI_API_KEY` | Google Gemini API key |
 | `OPENAI_API_KEY` | OpenAI API key |
 | `GITHUB_TOKEN` | GitHub Personal Access Token |
 | `GITLAB_TOKEN` | GitLab Personal Access Token |

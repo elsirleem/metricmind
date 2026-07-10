@@ -1,4 +1,5 @@
 import logging
+import os
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,9 +13,15 @@ logging.basicConfig(level=logging.INFO)
 
 app = FastAPI(title="MetricMind API", version="0.1.0")
 
+# Additional origins (e.g. a deployed frontend URL) can be added via a
+# comma-separated FRONTEND_URL env var without touching this list.
+_allowed_origins = ["http://localhost:3000"]
+if extra_origin := os.environ.get("FRONTEND_URL"):
+    _allowed_origins += [o.strip() for o in extra_origin.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
